@@ -1,0 +1,18 @@
+id: reconmap-git-head-v1
+info:
+  name: Git HEAD exposure candidate
+  author: reconmap
+  severity: info
+  description: One bounded GET, no repository download. Requires manual validation.
+http:
+  - method: GET
+    path: ['{{BaseURL}}/.git/HEAD']
+    redirects: false
+    max-size: 4096
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: regex
+        part: body
+        regex: ['(?m)^ref: refs/heads/']

@@ -1,0 +1,18 @@
+id: reconmap-environment-v1
+info:
+  name: Environment configuration exposure candidate
+  author: reconmap
+  severity: info
+  description: One bounded GET; no credential provider contact or validation.
+http:
+  - method: GET
+    path: ['{{BaseURL}}/.env']
+    redirects: false
+    max-size: 4096
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: regex
+        part: body
+        regex: ['(?m)^(DB_PASSWORD|DATABASE_URL|SECRET_KEY|AWS_SECRET_ACCESS_KEY)\s*=']

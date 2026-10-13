@@ -1,0 +1,32 @@
+# Illustrative only. This file does not grant authorization to example.com.
+version: 1
+mode: standard
+scope:
+  hosts: [example.com]
+  exclude_hosts: []
+  ports: [80, 443]
+  schemes: [http, https]
+  paths: ['/']
+  exclude_paths: ['/logout', '/checkout']
+  lab: false
+modules: [http, crawl, analysis, checks]
+budgets:
+  per_host_rps: 2
+  overall_rps: 10
+  depth: 2
+  urls_per_host: 500
+  requests: 5000
+  timeout: 15
+  retries: 1
+  response_bytes: 10485760
+  artifact_bytes: 1073741824
+  minutes: 30
+  dns_queries: 1000
+  provider_results: 5000
+  provider_seconds: 60
+provider_sources:
+  subfinder: [crtsh]
+  urlfinder: [commoncrawl]
+tools: {}
+strict_tools: false
+local_inputs: []

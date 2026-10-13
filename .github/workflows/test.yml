@@ -1,0 +1,39 @@
+name: Native core and offline integrations
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.12', '3.13']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Locked installation
+        run: |
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --no-deps -e .
+      - name: Verified native Gitleaks and passive-tool version checks
+        run: python tools/install_tools.py --tool gitleaks --tool subfinder --tool urlfinder
+      - name: Core and real offline integration tests
+        env:
+          RECONMAP_TEST_GITLEAKS: .tools/bin/gitleaks${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: python -m pytest -q
+      - name: CLI smoke and deterministic offline demonstration
+        run: |
+          reconmap --version
+          reconmap doctor --tool gitleaks=.tools/bin/gitleaks${{ runner.os == 'Windows' && '.exe' || '' }} --tool subfinder=.tools/bin/subfinder${{ runner.os == 'Windows' && '.exe' || '' }} --tool urlfinder=.tools/bin/urlfinder${{ runner.os == 'Windows' && '.exe' || '' }}
+          reconmap demo --output-root demo-output
+          reconmap scan --resume demo-output/example.com
+          reconmap report --run demo-output/example.com
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: demo-${{ matrix.os }}-${{ matrix.python }}
+          path: demo-output/
