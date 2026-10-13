@@ -50,7 +50,7 @@ Update this file with commands actually executed, results, unresolved limitation
 - Discovery provider traffic needs selected provider egress and explicit authorization; current cloud package-manager access does not prove target/provider connectivity. Runtime native HTTP deliberately does not use target egress proxies.
 - No authenticated/browser runtime crawling, arbitrary internal networks, dynamic JavaScript evaluation, indexed/external-source-map fetching, automatic credential validation, resource claiming, or broad CVE/exploit checking.
 - Redaction is pattern-based; raw local artifacts remain sensitive. Disk cap reserves report space but is not a filesystem quota; minimum finalization/WAL overhead can exceed impractically tiny caps. Hard-killed incomplete GETs can repeat on resume; consumed caps remain consumed.
-- Source files are present for review in the existing checkout; no commit or push has been performed. Environment draft persistence/publication must be reported separately from current-machine validation.
+- Source publication is recorded below. Environment draft persistence/publication remains separate from GitHub publication and current-machine validation.
 
 ## Reusable environment configuration
 
@@ -88,3 +88,13 @@ Fresh output locations (earlier runs preserved):
 - `/workspace/TheGodRecon/recon-output/debug-validation/127.0.0.1/reports/index.html` — real localhost HTTP + Gitleaks + jsluice run. Its scope is `recon-output/debug-validation/lab.yaml`; the recorded ephemeral server port is no longer listening.
 
 Remaining limitations are those listed above: static inference and pattern redaction do not guarantee complete coverage, raw artifacts remain sensitive, disk caps are not filesystem quotas, and same-account concurrent filesystem tampering is outside the private-run-directory trust model.
+
+## GitHub publication — 2026-10-13
+
+- [x] Committed the implementation, security fixes, tests, locks, CI and documentation: `eee2899b70199a0f491cdbe512d085f266f54af3` (37 files).
+- [x] Pushed the initial implementation to `Theghost2004/TheGodRecon`, branch `main`, without force. Verified GitHub's `HEAD` and `refs/heads/main` matched that commit after the push.
+- [x] Reviewed the staged file list and ran Gitleaks on exactly those files. Its two findings were the deliberately synthetic demo/test tokens. Scan outputs, virtual environments, caches and installed tools were excluded from the commit.
+- [x] `git diff --cached --check` passed after removing extra trailing blank lines; no implementation behavior changed during publication.
+- [ ] GitHub Actions execution has not been checked from this cloud environment. GitHub API requests returned Forbidden; Git transport successfully pushed and verified the branch. Earlier native Windows verification limitations remain until CI results are inspected.
+
+Repository: https://github.com/Theghost2004/TheGodRecon/tree/main . The earlier “no commit/push” statements describe the initial implementation/debugging sessions, before this publication step.
