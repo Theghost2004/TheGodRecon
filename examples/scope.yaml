@@ -1,5 +1,5 @@
 # Illustrative only. This file does not grant authorization to example.com.
-version: 1
+version: 2
 mode: standard
 scope:
   hosts: [example.com]
@@ -30,3 +30,21 @@ provider_sources:
 tools: {}
 strict_tools: false
 local_inputs: []
+# Optional V2 enrichment; these defaults enable no provider traffic.
+enrichments: []
+providers:
+  requests: 250
+  rps: 1
+  cache_seconds: 86400
+  wayback_pages: 5
+  page_size: 100
+grouping:
+  numeric_segments: true
+  uuid_segments: true
+  query_names: true
+priority:
+  version: 1
+  weights:
+    observed: 25
+    route: 15
+    finding: 20

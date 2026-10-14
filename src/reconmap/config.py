@@ -35,6 +35,8 @@ def hostname(value: str) -> str:
 
 
 def normalize_url(value: str) -> str:
+    if len(value) > 8192:
+        raise ConfigError("URL exceeds 8192 characters")
     if any(ord(c) < 32 or ord(c) == 127 for c in value) or "\\" in value:
         raise ConfigError("Control characters and backslashes are not accepted in URLs")
     try:
@@ -107,19 +109,72 @@ class Budgets(StrictModel):
     provider_seconds: int = Field(default=60, ge=1, le=600)
 
 
-MODULES = {"http", "crawl", "analysis", "checks", "subfinder", "urlfinder", "jsluice", "gitleaks", "dnsx", "httpx", "katana", "nuclei"}
+MODULES = {"dns", "http", "crawl", "analysis", "checks", "subfinder", "urlfinder", "jsluice", "gitleaks", "dnsx", "httpx", "katana", "nuclei"}
+
+
+class ProviderSettings(StrictModel):
+    requests: int = Field(default=250, ge=1, le=10000)
+    rps: float = Field(default=1, gt=0, le=5)
+    cache_seconds: int = Field(default=86400, ge=0, le=2592000)
+    wayback_pages: int = Field(default=5, ge=1, le=100)
+    page_size: int = Field(default=100, ge=1, le=1000)
+
+
+class GroupingSettings(StrictModel):
+    numeric_segments: bool = True
+    uuid_segments: bool = True
+    query_names: bool = True
+
+
+PRIORITY_WEIGHTS = {"base": 5, "route": 15, "observed": 25, "restricted": 10, "sources": 10, "parameters": 5, "technology": 5, "finding": 20, "duplicate_penalty": 10}
+
+
+class PrioritySettings(StrictModel):
+    version: Literal[1] = 1
+    weights: dict[str, int] = Field(default_factory=lambda: dict(PRIORITY_WEIGHTS))
+
+    @field_validator("weights")
+    @classmethod
+    def valid_weights(cls, values):
+        if set(values) - PRIORITY_WEIGHTS.keys() or any(type(v) is not int or not 0 <= v <= 100 for v in values.values()):
+            raise ValueError("Priority weights must use documented component names and integer weights 0–100")
+        return {**PRIORITY_WEIGHTS, **values}
 
 
 class ScanConfig(StrictModel):
-    version: Literal[1] = 1
+    version: Literal[1, 2] = 2
     scope: Scope
     budgets: Budgets = Field(default_factory=Budgets)
-    mode: Literal["standard", "passive", "demo"] = "standard"
+    mode: Literal["standard", "passive", "offline", "demo"] = "standard"
     modules: list[str] = ["http", "crawl", "analysis", "checks"]
     tools: dict[str, str] = {}
     strict_tools: bool = False
     local_inputs: list[str] = []
     provider_sources: dict[str, list[str]] = {"subfinder": ["crtsh"], "urlfinder": ["commoncrawl"]}
+    selected_tools: list[str] | None = None
+    profile: Literal["standard", "passive", "offline", "full"] | None = None
+    enrichments: list[str] = []
+    providers: ProviderSettings = Field(default_factory=ProviderSettings)
+    grouping: GroupingSettings = Field(default_factory=GroupingSettings)
+    priority: PrioritySettings = Field(default_factory=PrioritySettings)
+
+    @field_validator("selected_tools", mode="before")
+    @classmethod
+    def selected_names(cls, values):
+        if values is None:
+            return None
+        from .selectors import select_tools
+        if not isinstance(values, (str, list)) or values == []:
+            return [] if values == [] else values
+        return select_tools(values if isinstance(values, str) else ",".join(str(v) for v in values))
+
+    @field_validator("enrichments")
+    @classmethod
+    def valid_enrichments(cls, values):
+        from .tool_registry import ENRICHMENTS
+        if set(values) - set(ENRICHMENTS):
+            raise ValueError("Unknown enrichment; choose asn,wayback,tech,dedup,priority")
+        return [v for v in ENRICHMENTS if v in values]
 
     @field_validator("provider_sources")
     @classmethod
@@ -150,13 +205,20 @@ class ScanConfig(StrictModel):
         return self
 
     def digest(self) -> str:
-        return hashlib.sha256(json.dumps(self.model_dump(), sort_keys=True).encode()).hexdigest()
+        data = self.model_dump()
+        if self.version == 1 and self.selected_tools is None and self.profile is None and not self.enrichments and self.providers == ProviderSettings() and self.grouping == GroupingSettings() and self.priority == PrioritySettings():
+            for name in ("selected_tools", "profile", "enrichments", "providers", "grouping", "priority"):
+                data.pop(name)
+        return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
 
 
 def load_config(path: Path) -> ScanConfig:
     if path.stat().st_size > 1024 * 1024:
         raise ConfigError("Configuration exceeds 1 MiB")
-    return ScanConfig.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if isinstance(data, dict) and data.get("profile") and ("selected_tools" in data or "modules" in data or "mode" in data):
+        raise ConfigError("YAML profile cannot also define selected_tools, modules or mode; use one selection layer")
+    return ScanConfig.model_validate(data)
 
 
 def default_config(target: str) -> ScanConfig:

@@ -115,5 +115,6 @@ def test_store_dedup_schema(tmp_path):
     store.finding("rule","a","lead",{})
     store.finding("rule","a","lead",{})
     assert len(store.rows("observations"))==1 and len(store.rows("findings"))==1
-    assert store.conn.execute("PRAGMA user_version").fetchone()[0]==1
+    from reconmap.storage import SCHEMA
+    assert store.conn.execute("PRAGMA user_version").fetchone()[0]==SCHEMA
     store.close()

@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 async def observe_dns(scanner: Scanner) -> None:
     """CNAME destinations are observations, never implicitly authorized targets."""
-    if scanner.config.mode in {"passive","demo"}:
+    if scanner.config.mode in {"passive","offline","demo"}:
         scanner.store.stage("dns", "skipped", "No target DNS in passive/offline demo")
         return
     resolver=dns.asyncresolver.Resolver()
@@ -34,6 +34,8 @@ async def observe_dns(scanner: Scanner) -> None:
 
     for row in scanner.store.rows("hosts"):
         host=row["host"]
+        if not scanner.policy.host_allowed(host):
+            continue  # imported parent evidence is never current authorization
         try:
             ipaddress.ip_address(host)
             continue
@@ -43,7 +45,7 @@ async def observe_dns(scanner: Scanner) -> None:
             continue
         try:
             reserve()
-            answer=await resolver.resolve(host,"CNAME",search=False,lifetime=scanner.config.budgets.timeout,raise_on_no_answer=False)
+            answer=await resolver.resolve(host,"CNAME",search=False,lifetime=min(scanner.config.budgets.timeout, scanner.scheduler.remaining()),raise_on_no_answer=False)
             for record in answer:
                 alias=str(record.target).rstrip(".")
                 scanner.store.execute("INSERT INTO dns(host,address,kind,time,source) VALUES(?,?,?,?,?)",(host,alias,"CNAME",timestamp(),"dnspython"))
@@ -52,7 +54,7 @@ async def observe_dns(scanner: Scanner) -> None:
                 if scanner.policy.host_allowed(alias):
                     try:
                         reserve()
-                        await resolver.resolve(alias,"A",search=False,lifetime=scanner.config.budgets.timeout)
+                        await resolver.resolve(alias,"A",search=False,lifetime=min(scanner.config.budgets.timeout, scanner.scheduler.remaining()))
                     except dns.resolver.NXDOMAIN:
                         scanner.store.finding("dangling-dns-candidate",host,"CNAME points to an in-scope NXDOMAIN destination",{"alias":alias,"next_check":"Check service ownership manually; no resource claiming or takeover validation was attempted"},priority=60,confidence="low",reasons=["CNAME and current in-scope NXDOMAIN evidence; not a confirmed takeover"])
                     except dns.exception.DNSException as exc:
@@ -78,7 +80,7 @@ async def observe_dns(scanner: Scanner) -> None:
             probes.append(probe)
             reserve()
             try:
-                result=await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(probe,443,type=socket.SOCK_STREAM),scanner.config.budgets.timeout)
+                result=await asyncio.wait_for(asyncio.get_running_loop().getaddrinfo(probe,443,type=socket.SOCK_STREAM),min(scanner.config.budgets.timeout, scanner.scheduler.remaining()))
                 addresses.append({r[4][0] for r in result})
             except (OSError,TimeoutError):
                 addresses.append(set())

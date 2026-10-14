@@ -10,11 +10,15 @@ import platform
 import re
 import tarfile
 import tempfile
+import sys
 import urllib.request
 import zipfile
 from pathlib import Path
 
-PINS={"subfinder":"2.17.0","urlfinder":"0.0.3","gitleaks":"8.30.1"}
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
+from reconmap.tool_registry import REGISTRY
+
+PINS={tool.name: tool.version for tool in REGISTRY if tool.name != 'jsluice'}
 
 
 def download(url: str, cap: int) -> bytes:
@@ -69,7 +73,8 @@ def install(name: str, directory: Path) -> dict:
     filename=f"{name}_{version}_{system}_{arch}.{ext}"
     owner="gitleaks" if name=="gitleaks" else "projectdiscovery"
     base=f"https://github.com/{owner}/{name}/releases/download/v{version}/"
-    checksum_text=download(base+f"{name}_{version}_checksums.txt", 1024*1024).decode()
+    checksum_file = f"katana-{version}-checksums.txt" if name == 'katana' else f"{name}_{version}_checksums.txt"
+    checksum_text=download(base+checksum_file, 1024*1024).decode()
     expected=next((parts[0] for line in checksum_text.splitlines() if len(parts := line.split()) == 2 and parts[1].lstrip('*')==filename),None)
     if not expected or not re.fullmatch('[0-9a-f]{64}',expected):
         raise ValueError("Authoritative archive checksum missing")
@@ -106,7 +111,10 @@ def main() -> None:
     parser.add_argument('--tool',choices=list(PINS),action='append',required=True)
     parser.add_argument('--directory',type=Path,default=Path('.tools/bin'))
     args=parser.parse_args()
-    for name in args.tool:print(json.dumps(install(name,args.directory)))
+    try:
+        for name in args.tool:print(json.dumps(install(name,args.directory)))
+    except (OSError, ValueError, zipfile.BadZipFile, tarfile.TarError) as exc:
+        parser.exit(2, f"Verified installation failed: {exc}\n")
 
 
 if __name__=='__main__':main()

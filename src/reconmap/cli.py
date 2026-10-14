@@ -19,6 +19,8 @@ from .engine import Scanner, prepare_run
 from .reporting import compare_runs, generate_report
 from .security import redact
 from .storage import RunLock, Store, atomic_json, read_manifest, timestamp
+from .commands_v2 import add_scan_arguments, register
+from .selectors import resolve_selection
 
 
 class Parser(argparse.ArgumentParser):
@@ -38,18 +40,8 @@ def parser() -> Parser:
     init.add_argument("--config",type=Path,required=True)
     init.add_argument("--lab",action="store_true",help="Separate loopback-only lab network policy")
     scan=commands.add_parser("scan",help="New scoped scan or resume an unchanged run")
-    scan.add_argument("--target")
-    scan.add_argument("--config",type=Path)
-    scan.add_argument("--output-root",type=Path,default=Path("recon-output"))
-    scan.add_argument("--resume",type=Path)
-    scan.add_argument("--baseline",type=Path)
-    scan.add_argument("--break-lock",action="store_true")
-    scan.add_argument("--mode",choices=["standard","passive","demo"])
-    scan.add_argument("--modules",help="Comma-separated module selection, replacing configured selection")
-    scan.add_argument("--tool",action="append",default=[],metavar="NAME=PATH")
-    scan.add_argument("--strict-tools",action="store_true",default=None)
-    for flag,typ in (("max-requests",int),("max-urls",int),("depth",int),("timeout",float),("retries",int),("per-host-rps",float),("overall-rps",float),("max-response-bytes",int),("max-artifact-bytes",int),("max-minutes",float),("dns-budget",int),("provider-results",int),("provider-seconds",int)):
-        scan.add_argument("--"+flag,type=typ)
+    add_scan_arguments(scan)
+    register(commands, Parser)
     report=commands.add_parser("report",help="Regenerate local redacted exports and HTML")
     report.add_argument("--run",type=Path,required=True)
     report.add_argument("--break-lock",action="store_true")
@@ -60,6 +52,8 @@ def parser() -> Parser:
     demo.add_argument("--output-root",type=Path,default=Path("recon-output"))
     demo.add_argument("--with-gitleaks",action="store_true",help="Run optional installed Gitleaks offline")
     demo.add_argument("--tool",action="append",default=[],metavar="NAME=PATH")
+    demo.add_argument("--tools", help="Optional numbered selection; active binaries remain blocked")
+    demo.add_argument("--enrich", help="Optional enrichments; demo never contacts providers")
     validate=commands.add_parser("validate",help="Record an explicit analyst decision; no automatic credential testing")
     validate.add_argument("--run",type=Path,required=True)
     validate.add_argument("--finding",required=True,help="Finding fingerprint")
@@ -88,11 +82,10 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
         raise ConfigError("A new scan requires an explicit YAML --config; create one with reconmap init")
     if args.config and args.resume:
         config=load_config(args.config)
+    choices = {name: getattr(args, name, None) for name in ("tools", "profile", "enrich", "modules", "mode")}
+    if not args.resume or args.config is not None or any(value is not None for value in choices.values()):
+        config = resolve_selection(config, **choices)
     data=config.model_dump()
-    if args.mode:
-        data["mode"]=args.mode
-    if args.modules is not None:
-        data["modules"]=[v.strip() for v in args.modules.split(",") if v.strip()]
     data["tools"].update(overrides(args.tool))
     if args.strict_tools is not None:
         data["strict_tools"]=args.strict_tools
@@ -104,20 +97,26 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
     return ScanConfig.model_validate(data)
 
 
-def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path | None = None, baseline: Path | None = None, break_lock: bool = False) -> int:
+def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path | None = None, baseline: Path | None = None, break_lock: bool = False, initialize=None) -> int:
     if baseline:
         read_manifest(baseline)
     tools={name:identify(name,config.tools.get(name)) for name in config.modules if name in PINS}
     if config.strict_tools:
-        missing=[name for name,info in tools.items() if not info.supported and not (config.mode=="demo" and name in {"subfinder","urlfinder"})]
+        missing=[name for name,info in tools.items() if not info.supported and not ((config.mode=="demo" or config.scope.lab) and name in {"subfinder","urlfinder"})]
         if missing:
             print("Dependency preflight failed: "+", ".join(missing)+". Run reconmap doctor.",file=sys.stderr)
             return 4
     path,manifest=prepare_run(config,target,output_root,resume,baseline)
-    print("Effective scope: "+json.dumps(config.scope.model_dump(),sort_keys=True))
+    print("Effective scope: "+redact(json.dumps(config.scope.model_dump(),sort_keys=True)))
     print(f"Mode {config.mode}; ceilings {config.budgets.requests} HTTP requests, {config.budgets.urls_per_host} URLs/host, depth {config.budgets.depth}, {config.budgets.per_host_rps:g}/s/host, {config.budgets.minutes:g} minutes")
     print(f"Run directory: {path}")
     with RunLock(path,break_lock):
+        if initialize is not None or manifest.get("lineage", {}).get("initialization_pending"):
+            from .reruns import initialize_rerun
+            initialization_state = initialize_rerun(path, manifest, config, initialize)
+            if initialization_state is not None:
+                print(f"{initialization_state}: {path/'reports/index.html'}")
+                return 130 if initialization_state == "interrupted" else 2
         current={name:info.record() for name,info in tools.items()}
         saved_path=path/"tools.json"
         if resume and saved_path.exists():
@@ -127,7 +126,7 @@ def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path 
                 if info.get("sha256") != new.get("sha256") or info.get("version") != new.get("version"):
                     raise ConfigError(f"Tool identity changed for {name}; start a new run to preserve provenance")
         import importlib.metadata
-        atomic_json(saved_path,{"engine":__version__,"python":sys.version.split()[0],"external":current,"libraries":{n:importlib.metadata.version(n) for n in ("aiohttp","pydantic","tree-sitter","tree-sitter-javascript")},"template_profile":"reconmap-exposure-v1 (native, no upstream template execution)","traffic_accounting":"Measured reservations for application-owned HTTP attempts; provider network request counts unknown"})
+        atomic_json(saved_path,{"engine":__version__,"python":sys.version.split()[0],"external":current,"libraries":{n:importlib.metadata.version(n) for n in ("aiohttp","pydantic","tree-sitter","tree-sitter-javascript")},"template_profile":"reconmap-exposure-v1 (native, no upstream template execution)","traffic_accounting":"Target HTTP and owned RIPE/CDX reservations are separate measured counters; external Subfinder/URLFinder provider counts remain unknown"})
         previous=signal.getsignal(signal.SIGTERM)
         signal.signal(signal.SIGTERM,lambda *unused: (_ for _ in ()).throw(KeyboardInterrupt()))
         try:
@@ -141,6 +140,9 @@ def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path 
 def main(argv: list[str] | None = None) -> int:
     try:
         args=parser().parse_args(argv)
+        if args.command in {"tools", "plan", "rerun"}:
+            from .commands_v2 import handle
+            return handle(args)
         if args.command=="doctor":
             tools=doctor(overrides(args.tool))
             if args.json:
@@ -170,7 +172,11 @@ def main(argv: list[str] | None = None) -> int:
             config.budgets.depth=3
             config.tools=overrides(args.tool)
             if args.with_gitleaks:
+                if args.tools is not None:
+                    raise ConfigError("Use --with-gitleaks or --tools, not both")
                 config.modules.append("gitleaks")
+            if args.tools is not None or args.enrich is not None:
+                config = resolve_selection(config, tools=args.tools, enrich=args.enrich, mode="demo")
             return run(config,"example.com",args.output_root)
         if args.command=="report":
             read_manifest(args.run)
@@ -205,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
         return 3
     except ValidationError as exc:
-        print("Configuration validation failed: "+json.dumps(exc.errors(include_input=False,include_context=False)),file=sys.stderr)
+        print("Configuration validation failed: "+redact(json.dumps(exc.errors(include_input=False,include_context=False))),file=sys.stderr)
         return 3
     except yaml.YAMLError:
         print("Configuration error: malformed YAML; check indentation and quoting",file=sys.stderr)

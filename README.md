@@ -1,6 +1,51 @@
-# reconmap V1
+# TheGodRecon V2 (reconmap 0.2.0)
 
 A local Python CLI for explicitly authorized reconnaissance. It creates a scoped asset map, durable SQLite evidence, static-analysis leads and a searchable offline HTML report. No account, paid service, LLM or telemetry is required. There are no exploitation, credential-validation, form-submission or resource-claiming features.
+
+
+## V2 selection, plans and profiles
+
+The permanent registry IDs are **1 Subfinder, 2 URLFinder, 3 dnsx, 4 ProjectDiscovery httpx, 5 Katana, 6 jsluice, 7 Gitleaks, 8 Nuclei**. `--tools` selects executables; singular `--tool NAME=PATH` configures their paths. A selection runs only those external tools and necessary internal safety/analysis/native alternatives. Selecting Subfinder alone does not start HTTP crawling. Selecting local tools alone needs `local_inputs` or a parent run; missing inputs are reported as skipped.
+
+```text
+reconmap tools list
+reconmap tools doctor --tool "httpx=C:/Tools With Spaces/httpx.exe"
+reconmap plan --target authorized.example --config scope.yaml --tools all --enrich all --json
+reconmap scan --target authorized.example --config scope.yaml --tools 1
+reconmap scan --target authorized.example --config scope.yaml --tools 1,3,5,7
+reconmap scan --target authorized.example --config scope.yaml --tools 1-4
+reconmap scan --target authorized.example --config scope.yaml --tools quad
+reconmap scan --target authorized.example --config scope.yaml --profile full
+reconmap scan --target authorized.example --config scope.yaml --tools all --enrich all
+reconmap scan --target authorized.example --config scope.yaml --tools web --enrich tech,dedup,priority
+reconmap scan --target authorized.example --config scope.yaml --profile passive
+reconmap scan --target authorized.example --config scope.yaml --profile offline --enrich tech,dedup,priority
+reconmap demo --enrich tech,dedup,priority
+```
+
+Replace the illustrative `authorized.example` and review its YAML scope before any real scan. Plan previews validate scope and inspect binary version/help only; they do not resolve or request target hosts or providers. Expressions accept names, IDs, ascending ranges, `quad` (1–4), `passive` (1–2), `offline` (6–7), `web` (4–5) and `all` (1–8). Optional `1+2+3` means `1,2,3`. Duplicates disappear and registry order is deterministic.
+
+**Direct dnsx/httpx/Katana/Nuclei execution remains blocked.** Each tool has a reviewed binary/schema and a separate persisted `blocked-by-policy` status; native DNS/HTTP/crawling/two reviewed exposure checks run instead when selected. Full selection therefore produces useful native/local results with exit **2** for incomplete external coverage. `--strict-tools` instead exits **4** before allocating a run. Installation or a preset never removes this restriction. In this cloud the user network-namespace isolation check failed; HTTPS CONNECT alone cannot enforce excluded paths or prevent scanner bypasses. No privileged, Docker/WSL or unsafe bypass is introduced. See [TOOLS.md](docs/TOOLS.md) for individual reasons.
+
+Profiles define defaults: `standard` keeps the V1 native workflow; `passive` selects 1–2 without target HTTP/DNS; `offline` selects 6–7 plus native artifact analysis; `full` selects all tools, their native alternatives and all enrichments. CLI `--tools` or `--modules` overrides a YAML profile/tool selection; CLI `--profile` overrides YAML profile defaults. CLI `--enrich` overrides YAML enrichment selection. An explicit YAML `enrichments` list overrides its YAML profile's enrichment default. `--tools` and `--modules` together are rejected, as are CLI `--profile` with `--tools`, `--modules` or `--mode`; use explicit selections instead. YAML profiles cannot also define `modules`, `mode` or `selected_tools`. Tool paths and budget overrides remain independent. V1 YAML is still accepted.
+
+Optional enrichments are `asn,wayback,tech,dedup,priority`; `--enrich all` and `--enrich none` are supported. Only an explicit enrichment/profile setting permits third-party metadata access. Demo, offline and loopback lab modes contact no providers. Tech/grouping/priority use captured evidence only. ASN uses RIPE Stat for observed authorized public A/AAAA addresses; it never authorizes an ASN/CIDR scan. Wayback collects bounded CDX metadata for the seed host, never archived content; history is not current liveness. Owned provider GETs have separate pinned HTTPS endpoints, DNS checks, request/rate/time/output caps and persistent expiring caches. External Subfinder/URLFinder provider request counts remain unknown and are reported separately. Live provider collection has not been execution-verified in this cloud; local fixtures cover pagination, failures, schema validation, caching and destination controls.
+
+Grouping preserves exact URLs and every source. Numeric/UUID route families and repeated parameter-name signatures are analytical groups: case, explicit ports, methods and exact query values remain distinct and are still independently schedulable. Priority is a versioned configurable 0–100 **review score**, with evidence confidence and component reasons. Guessed routes are capped at 35; scores never confirm a vulnerability. Report sections and CSV/JSONL exports include tools, infrastructure, historical URLs, technologies, route groups and prioritized endpoints.
+
+## V2 reruns and database compatibility
+
+```text
+reconmap rerun --from ./recon-output/authorized.example --tools 6,7 --enrich tech,dedup,priority
+reconmap rerun --from ./recon-output/authorized.example --tools 4,5 --config current-scope.yaml
+reconmap rerun --from ./recon-output/authorized.example --profile full --config current-scope.yaml
+reconmap scan --resume ./recon-output/1_authorized.example
+reconmap report --run ./recon-output/1_authorized.example
+```
+
+Rerun always creates a separate folder using the same collision-safe convention. Local-only selection automatically uses offline mode, verifies every copied artifact hash/size, and makes independent file copies. The stopped/unlocked parent and its analyst decisions remain unchanged. New findings start as candidates; parent decisions remain available in lineage metadata. Fresh active recollection revalidates current scope, uses new counters/queues/locks, and does not treat parent discoveries as authorization. A synthetic/demo parent requires a current YAML config before any real network recollection; its generated fixture scope grants no real authority. Provider traffic is not inherited implicitly by rerun; select it explicitly again. Existing `local_inputs` paths are not reread unless a current YAML is supplied. New/parent run IDs, selected tools, versions/hashes, config digest, copied/new artifact hashes, request counts, stage completion and finding comparison are recorded. Interrupted copying has its own checkpoint: resume verifies the same parent/config/artifact set and completes atomic copies, with copying time retained in the run budget. Offline reused HTTP observations retain their parent collection timestamp and do not establish new liveness.
+
+SQLite migration **1→2** only adds V2 tables; original evidence, findings and analyst decisions are retained. V1 manifests/configurations remain readable and may be reused by rerun. Report regeneration or a compatible resumed write adds the new schema transactionally; immutable parent/diff reads never migrate the baseline. Unknown schemas fail closed. Resume continues existing completed work and remaining budgets; rerun creates new work. Reports do not require rerun. See [examples/scope.yaml](examples/scope.yaml), [v2-full.yaml](examples/v2-full.yaml) and [v2-offline.yaml](examples/v2-offline.yaml).
 
 ## Installation: Linux x86-64
 
@@ -45,7 +90,7 @@ reconmap scan --target example.com --config scope.local.yaml --mode passive --mo
 reconmap scan --target example.com --config scope.local.yaml --max-requests 100 --max-urls 50 --depth 1 --per-host-rps 1 --timeout 10
 ```
 
-These example commands are instructions only; **no authorization to scan example.com is implied**. During development use `demo` or loopback fixtures. Demo's example.com URLs are in-memory synthetic fixtures: no DNS, target HTTP or discovery-provider traffic occurs. The default modules are `http,crawl,analysis,checks`. Passive providers and offline binary enrichments are opt-in; for example set `modules: [http, crawl, analysis, checks, subfinder, urlfinder, gitleaks]`. Missing selected tools produce explicit degraded stages and exit 2; `--strict-tools` fails preflight with exit 4. Use `doctor --tool "gitleaks=C:/Tools With Spaces/gitleaks.exe"` or YAML `tools` overrides. Doctor never silently installs or updates tools.
+These example commands are instructions only; **no authorization to scan example.com is implied**. During development use `demo` or loopback fixtures. Demo's example.com URLs are in-memory synthetic fixtures: no DNS, target HTTP or discovery-provider traffic occurs. The default modules are `http,crawl,analysis,checks`. Passive providers and offline binary enrichments are opt-in; for example set `modules: [http, crawl, analysis, checks, subfinder, urlfinder, gitleaks]`. Missing/incompatible selected tools and policy blocks produce explicit coverage statuses and exit 2; `--strict-tools` fails preflight with exit 4. Use `doctor --tool "gitleaks=C:/Tools With Spaces/gitleaks.exe"` or YAML `tools` overrides. Doctor never silently installs or updates tools.
 
 YAML fields and defaults are in [examples/scope.yaml](examples/scope.yaml). Exact hosts do not authorize subdomains. To authorize subdomains explicitly, add `*.example.com` and retain `example.com` separately if the apex is allowed. `exclude_hosts` and `exclude_paths` win. `paths` are case-sensitive, segment-boundary prefixes; `/api` does not allow `/apix`. `ports` and `schemes` are separate restrictions. Lab mode is deliberately loopback-only. Local files can be analyzed using `local_inputs: ['fixtures/app.js', 'fixtures/app.js.map']`, including in passive mode; their contents remain local. Relative paths are interpreted from the invoking working directory, so keep that directory consistent on resume.
 

@@ -1,0 +1,20 @@
+# Illustrative only; replace the hostname with a separately authorized target.
+version: 2
+scope:
+  hosts: [authorized.example]
+  exclude_hosts: []
+  ports: [80, 443]
+  schemes: [http, https]
+  paths: ['/']
+  exclude_paths: ['/logout', '/checkout']
+profile: full
+strict_tools: false
+# Direct active tools remain blocked; native fallbacks collect safely and the
+# report records incomplete requested external coverage. --strict-tools exits 4.
+providers:
+  requests: 100
+  rps: 1
+  cache_seconds: 3600
+  wayback_pages: 3
+  page_size: 100
+tools: {}

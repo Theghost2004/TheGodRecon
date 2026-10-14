@@ -24,6 +24,7 @@ from .config import ScanConfig, normalize_url, request_url
 from .scope import ScopePolicy
 from .security import redact, redact_data
 from .storage import POLICY_REVISION, SCHEMA, RunLock, Store, allocate_run, artifact_path, atomic_json, read_manifest, timestamp
+from . import __version__
 
 
 class BudgetStop(Exception):
@@ -180,7 +181,7 @@ def prepare_run(config: ScanConfig, target: str | None, root: Path, resume: Path
     restrict_directory(run)
     for name in ("raw", "normalized", "assets/js", "assets/maps", "assets/content", "evidence", "logs", "checkpoints", "reports", "diff", "tmp"):
         (run / name).mkdir(parents=True, exist_ok=True)
-    manifest = {"schema": SCHEMA, "run_id": uuid.uuid4().hex, "original_target": target, "target": normalized, "host": urlsplit(normalized).hostname, "created": timestamp(), "state": "created", "config_digest": config.digest(), "baseline": str(baseline.absolute()) if baseline else None, "engine": "reconmap-0.1.0", "transport": "offline-fixtures" if config.mode == "demo" else "native-http"}
+    manifest = {"schema": SCHEMA, "run_id": uuid.uuid4().hex, "original_target": target, "target": normalized, "host": urlsplit(normalized).hostname, "created": timestamp(), "state": "created", "config_digest": config.digest(), "baseline": str(baseline.absolute()) if baseline else None, "engine": "reconmap-" + __version__, "transport": "offline-fixtures" if config.mode == "demo" else "native-http"}
     manifest["policy_revision"] = POLICY_REVISION
     atomic_json(run / "manifest.json", manifest)
     atomic_json(run / "config.effective.json", config.model_dump())
@@ -211,6 +212,16 @@ class Scanner:
         metadata = self.store.conn.execute("SELECT COALESCE(SUM(length(data)+length(subject)+200),0) FROM observations").fetchone()[0]
         metadata += self.store.conn.execute("SELECT COALESCE(SUM(length(evidence)+length(subject)+length(title)+500),0) FROM findings").fetchone()[0]
         metadata += sum(self.store.conn.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]*1000 for t in ("urls","relationships","jobs","parameters","artifacts"))
+        for table, fields in {
+            "historical_urls": "length(url)+length(original_url)+500",
+            "infrastructure": "length(host)+length(address)+length(organization)+500",
+            "technologies": "length(evidence)+length(subject)+500",
+            "url_groups": "length(signature)+length(parameter_names)+500",
+            "endpoint_priority": "length(url)+length(reasons)+length(factors)+500",
+            "lineage": "length(metadata)+length(reused_artifacts)+500",
+            "tool_executions": "length(identity_json)+length(detail)+500",
+        }.items():
+            metadata += self.store.conn.execute(f"SELECT COALESCE(SUM({fields}),0) FROM {table}").fetchone()[0]
         # Redundant JSON/HTML exports expand metadata; leave a conservative reserve.
         finalization = 128 * 1024 + 12 * metadata
         if total + reserve + finalization >= self.config.budgets.artifact_bytes:
@@ -229,21 +240,25 @@ class Scanner:
         if not allowed:
             state = "external-reference"
         self.store.execute("INSERT OR IGNORE INTO urls(url,grouping_key,source,state,depth) VALUES(?,?,?,?,?)", (url, url, source, state, depth))
-        self.store.observed(url, "discovery", {"allowed": allowed, "reason": reason, "parent": parent}, source, identity=hashlib.sha256(f"{url}:{source}:{parent}".encode()).hexdigest())
+        self.store.observed(url, "discovery", {"allowed": allowed, "reason": reason, "parent": parent, "original_url": candidate}, source, identity=hashlib.sha256(f"{url}:{source}:{parent}:{candidate}".encode()).hexdigest())
         if parent:
             self.store.relate(parent, url, source, source)
         for name, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True):
             self.store.execute("INSERT OR IGNORE INTO parameters VALUES(?,?,?,?)", (url, name, "query", source))
         if not allowed:
+            self.store.execute("UPDATE urls SET state='external-reference' WHERE url=?", (url,))
             return
         self.store.execute("INSERT OR IGNORE INTO hosts VALUES(?,?,?)", (host, "untested", timestamp()))
-        if not fetch or self.config.mode == "passive" or "http" not in self.config.modules:
+        if not fetch or self.config.mode in {"passive", "offline"} or "http" not in self.config.modules:
             return
         if depth > self.config.budgets.depth:
             if not self.store.conn.execute("SELECT 1 FROM jobs WHERE url=?", (request_url(url),)).fetchone():
                 self.limit("crawl depth cap reached")
             return
         wire_url = request_url(url)
+        if self.store.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= self.config.budgets.requests and not self.store.conn.execute("SELECT 1 FROM jobs WHERE url=?", (wire_url,)).fetchone():
+            self.limit("global job queue cap reached; unscheduled discoveries retained")
+            return
         host_count = sum(urlsplit(row[0]).hostname == host for row in self.store.conn.execute("SELECT url FROM jobs"))
         if host_count >= self.config.budgets.urls_per_host and not self.store.conn.execute("SELECT 1 FROM jobs WHERE url=?", (wire_url,)).fetchone():
             self.limit("per-host URL cap reached")
@@ -302,6 +317,9 @@ class Scanner:
         text = response.body.decode("utf-8", errors="replace")
         kind = "map" if urlsplit(url).path.endswith(".map") else "js" if "javascript" in content_type or urlsplit(url).path.endswith(".js") else "content"
         digest = self.save_artifact(response.body, kind, url)
+        if "tech" in self.config.enrichments:
+            from .enrichment.technology import fingerprint
+            fingerprint(self.store, url, response.headers, text, digest)
         parser = PageParser()
         if "html" in content_type:
             parser.feed(text)
@@ -362,47 +380,8 @@ class Scanner:
             self.store.set_meta("baseline:" + origin, {"hash": digest, "text": text[:20000], "status": response.status})
 
     async def collect_passive(self) -> None:
-        for name in ("subfinder", "urlfinder"):
-            if name not in self.config.modules:
-                continue
-            previous = self.store.conn.execute("SELECT state FROM stages WHERE name=?", (name,)).fetchone()
-            if previous and previous[0] == "completed":
-                continue
-            info = self.tools[name]
-            if self.config.mode == "demo":
-                self.store.stage(name, "skipped", "Demo does not contact discovery providers")
-                continue
-            if not info.supported:
-                self.store.stage(name, "degraded", info.reason)
-                continue
-            cwd = self.run / "raw" / name
-            cwd.mkdir(exist_ok=True)
-            try:
-                self.scheduler.check_time()
-                argv = command(info, self.manifest["host"], cwd, self.config.budgets.provider_seconds, sources=self.config.provider_sources.get(name))
-                provider_file = os.environ.get("RECONMAP_" + name.upper() + "_PROVIDER_CONFIG")
-                if provider_file:
-                    argv.extend(["-pc", str(Path(provider_file).absolute())])
-                self.check_disk_budget(self.config.budgets.response_bytes*2)
-                result = await execute(argv, cwd, min(self.config.budgets.provider_seconds, self.scheduler.remaining()), limit=min(self.config.budgets.response_bytes, self.config.budgets.artifact_bytes))
-                capture(result, cwd)
-                records, errors = parse_records(name, result.stdout)
-                if result.code != 0:
-                    self.store.stage(name, "failed", f"Execution exit {result.code}; any valid partial records retained")
-                elif errors or re.search(r"(?i)\b(error|failed|timeout|denied|forbidden)\b",result.stderr):
-                    self.store.stage(name, "partial", "; ".join(errors[:20]) or "Provider reported errors; see redacted raw stderr")
-                else:
-                    self.store.stage(name, "completed", f"{len(records)} parsed records; provider network requests are not measured")
-                if len(records) > self.config.budgets.provider_results:
-                    self.limit("provider result cap reached")
-                for record in records[:self.config.budgets.provider_results]:
-                    candidate = record["host"] if name == "subfinder" else record["url"]
-                    self.store.observed(candidate, "provider", redact_data(record), name)
-                    if name == "subfinder":
-                        candidate = "https://" + candidate
-                    self.add_url(candidate, name)
-            except (OSError, ValueError, TimeoutError) as exc:
-                self.store.stage(name, "failed", str(exc))
+        from .integrations import collect_passive
+        await collect_passive(self)
 
     def local_inputs(self) -> None:
         for value in self.config.local_inputs:
@@ -434,63 +413,8 @@ class Scanner:
                 self.store.stage("local-inputs", "partial", str(exc))
 
     async def local_tools(self) -> None:
-        for name in ("gitleaks", "jsluice"):
-            if name not in self.config.modules:
-                continue
-            info = self.tools[name]
-            if not info.supported:
-                self.store.stage(name, "degraded", info.reason)
-                continue
-            cwd = self.run / "raw" / name
-            cwd.mkdir(exist_ok=True)
-            artifacts = self.store.rows("artifacts")
-            identity = info.sha256 + ":" + ":".join(sorted(a["hash"] for a in artifacts))
-            if self.store.meta("adapter:" + name) == identity:
-                continue
-            files = [self.run / "assets"] if name == "gitleaks" else [self.run / a["path"] for a in artifacts if a["kind"] == "js"]
-            state = "completed"
-            details = []
-            for path in files:
-                try:
-                    self.scheduler.check_time()
-                    self.check_disk_budget(self.config.budgets.response_bytes*2)
-                    capture_dir = cwd / path.stem if name == "jsluice" else cwd
-                    capture_dir.mkdir(exist_ok=True)
-                    result = await execute(command(info, self.manifest["host"], capture_dir, self.config.budgets.provider_seconds, path), capture_dir, min(self.config.budgets.provider_seconds, self.scheduler.remaining()), limit=self.config.budgets.response_bytes)
-                    capture(result, capture_dir)
-                    if result.code not in ({0,10} if name == "gitleaks" else {0}):
-                        raise ValueError(f"Execution exit {result.code}; findings exit for Gitleaks is 10")
-                    if name == "gitleaks" and (cwd / "findings.json").stat().st_size > self.config.budgets.response_bytes:
-                        raise ValueError("Gitleaks findings report exceeds tool output cap")
-                    text = (cwd / "findings.json").read_text(encoding="utf-8") if name == "gitleaks" else result.stdout
-                    records, errors = parse_records(name, text)
-                    if errors:
-                        state = "partial"
-                        details.extend(errors)
-                    non_get_urls = {r.get("url") for r in records if r.get("method", "").upper() not in {"", "GET"}}
-                    if name == "jsluice":
-                        # jsluice labels dynamic fetch options GET. The stricter
-                        # native parser must veto those before any scheduling,
-                        # including when the analysis module is disabled.
-                        routes, _, _ = js_strings(path.read_text(encoding="utf-8", errors="replace"))
-                        non_get_urls.update(r["value"] for r in routes if r["method"] not in {None, "GET"})
-                    for record in records:
-                        if name == "gitleaks":
-                            source_file = Path(record.get("File", ""))
-                            match = next((a for a in artifacts if source_file.name == Path(a["path"]).name), None)
-                            self.store.finding("gitleaks:" + record["RuleID"], "artifact:" + (match["hash"] if match else hashlib.sha256(str(source_file).encode()).hexdigest()), "Potential secret material (offline Gitleaks)", {"hash": match["hash"] if match else None, "line": record.get("StartLine"), "excerpt": "[REDACTED]", "synthetic": self.config.mode == "demo", "next_check": "Review context locally; credential validity is untested"}, priority=5 if self.config.mode == "demo" else 80, source="gitleaks")
-                        else:
-                            self.store.observed("artifact:" + path.stem, "jsluice-endpoint", redact_data(record), "jsluice")
-                            if "EXPR" not in record["url"] and "${" not in record["url"]:
-                                bases = [r[0] for r in self.store.conn.execute("SELECT parent FROM relationships WHERE child=? AND kind='response_body'", ("artifact:" + path.stem,)) if r[0].startswith(("http://","https://"))] or [self.manifest["target"]]
-                                for base in bases:
-                                    self.add_url(urljoin(base, record["url"]), "jsluice", "artifact:" + path.stem, fetch=record["url"] not in non_get_urls)
-                except (OSError, ValueError, TimeoutError) as exc:
-                    state = "failed"
-                    details.append(str(exc))
-            self.store.stage(name, state, "; ".join(details[:20]) or "Offline local artifacts processed")
-            if state == "completed":
-                self.store.set_meta("adapter:" + name, identity)
+        from .integrations import local_tools
+        await local_tools(self)
 
     def correlate(self) -> None:
         import difflib
@@ -543,48 +467,19 @@ class Scanner:
         self.store.execute("UPDATE jobs SET state='queued' WHERE state='running'")
         self.store.stage("core", "running", "Native sequential scheduler")
         try:
-            self.add_url(self.manifest["target"], "seed")
-            await self.collect_passive()
-            self.local_inputs()
-            if "http" in self.config.modules:
-                from .dnschecks import observe_dns
-                await observe_dns(self)
-            for name in ("dnsx","httpx","katana","nuclei"):
-                if name in self.config.modules:
-                    self.store.stage(name,"degraded", CAPABILITIES[name])
-            if self.config.mode != "passive" and "http" in self.config.modules:
-                seed = urlsplit(self.manifest["target"])
-                origin = urlunsplit(seed._replace(path="/", query="", fragment=""))
-                if "crawl" in self.config.modules:
-                    for path in ("robots.txt","sitemap.xml","__reconmap_missing_" + hashlib.sha256(self.manifest["target"].encode()).hexdigest()[:12]):
-                        self.add_url(urljoin(origin,path),"bounded-baseline",depth=0)
-                if "checks" in self.config.modules:
-                    for path in (".git/HEAD",".env","openapi.json","swagger.json"):
-                        self.add_url(urljoin(origin,path),"exposure-profile-v1",depth=0)
-                connector = aiohttp.TCPConnector(resolver=SafeResolver(self.policy,self.config,self.store), ttl_dns_cache=0, force_close=True, limit=1)
-                async with aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=self.config.budgets.timeout), auto_decompress=False, trust_env=False, headers={"User-Agent":"reconmap/0.1 authorized-recon", "Accept-Encoding":"identity"}, cookie_jar=aiohttp.DummyCookieJar()) as session:
-                    self.session = session
-                    while True:
-                        await self.crawl()
-                        await self.local_tools()
-                        # New assets from inferred endpoints must also reach the
-                        # selected offline adapters, under the same shared caps.
-                        if not self.store.conn.execute("SELECT 1 FROM jobs WHERE state='queued' LIMIT 1").fetchone():
-                            break
-            else:
-                self.store.stage("http","skipped","Passive mode or HTTP module disabled: no target HTTP/TLS")
-                await self.local_tools()
+            from .orchestrator import run_pipeline
+            await run_pipeline(self)
             self.correlate()
             self.scheduler.check_time()
             for module in ("http","crawl","analysis","checks"):
                 if module not in self.config.modules:
                     continue
                 previous = self.store.conn.execute("SELECT state FROM stages WHERE name=?", (module,)).fetchone()
-                if self.config.mode == "passive" and module in {"http","crawl","checks"}:
+                if self.config.mode in {"passive", "offline"} and module in {"http","crawl","checks"}:
                     self.store.stage(module,"skipped","Passive mode makes no target HTTP/TLS requests")
                 elif not previous or previous[0] not in {"partial","failed"}:
                     self.store.stage(module,"partial" if self.limits else "completed",f"Native {module}; scope and budgets retained")
-            if self.limits or any(s["state"] in {"partial","failed","degraded"} for s in self.store.rows("stages")):
+            if self.limits or any(s["state"] in {"partial","failed","degraded","blocked-by-policy","unavailable","incompatible"} for s in self.store.rows("stages")):
                 state = "partial"
         except BudgetStop as exc:
             self.limit(str(exc))
@@ -595,17 +490,28 @@ class Scanner:
             self.store.stage("core-error","failed",redact(f"{type(exc).__name__}: {exc}"))
             state = "partial"
         finally:
+            if state != "completed":
+                from .orchestrator import finalize_enrichments
+                try:
+                    finalize_enrichments(self)
+                except (ValueError, OSError) as exc:
+                    self.store.stage("normalization", "partial", redact(str(exc)))
+            self.store.execute("UPDATE tool_executions SET state=?,detail='Execution stopped before adapter completion' WHERE state IN ('running','ready')", ("interrupted" if state == "interrupted" else "skipped",))
+            self.store.execute("UPDATE stages SET state=?,detail='Workflow stopped before dependency stage completed' WHERE name LIKE 'workflow:%' AND state='running'", (state,))
             self.scheduler.checkpoint()
             self.store.execute("UPDATE jobs SET state='queued' WHERE state='running'")
             self.store.stage("core",state,"; ".join(self.limits))
-            self.manifest.update({"state":state,"updated":timestamp(),"requests":self.store.meta("requests",0),"limits":self.limits})
+            self.manifest.update({"state":state,"updated":timestamp(),"requests":self.store.meta("requests",0),"owned_provider_requests":self.store.meta("provider_requests",0),"limits":self.limits})
             self.store.execute("UPDATE runs SET state=?,updated=? WHERE run_id=?",(state,self.manifest["updated"],self.manifest["run_id"]))
             atomic_json(self.run / "manifest.json",self.manifest)
             atomic_json(self.run / "checkpoints" / "state.json", {"state":state,"requests":self.store.meta("requests",0),"pending":self.store.conn.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0],"time":timestamp()})
             from .reporting import generate_report, compare_runs
+            diff = None
             if self.manifest.get("baseline"):
                 diff = compare_runs(Path(self.manifest["baseline"]),self.run)
                 atomic_json(self.run / "diff" / "comparison.json",diff)
+            from .reruns import finalize_lineage
+            finalize_lineage(self, diff)
             generate_report(self.run,self.store)
             with (self.run/"logs"/"events.jsonl").open("w",encoding="utf-8") as log:
                 for row in self.store.rows("observations"):
