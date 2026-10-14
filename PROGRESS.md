@@ -1,4 +1,4 @@
-# reconmap V1 progress
+# TheGodRecon implementation progress
 
 The implementation brief is preserved at [docs/IMPLEMENTATION_BRIEF.md](docs/IMPLEMENTATION_BRIEF.md) (read completely). The repository was empty and had no AGENTS.md. No external targets are authorized for development. Use offline demo or explicit loopback fixtures only.
 
@@ -98,3 +98,55 @@ Remaining limitations are those listed above: static inference and pattern redac
 - [ ] GitHub Actions execution has not been checked from this cloud environment. GitHub API requests returned Forbidden; Git transport successfully pushed and verified the branch. Earlier native Windows verification limitations remain until CI results are inspected.
 
 Repository: https://github.com/Theghost2004/TheGodRecon/tree/main . The earlier “no commit/push” statements describe the initial implementation/debugging sessions, before this publication step.
+
+## V2 implementation — 2026-10-14
+
+Full request read and preserved at `docs/V2_IMPLEMENTATION_BRIEF.md`. Work started from verified `origin/main` (`fbf268c`) on dedicated branch `feature/thegodrecon-v2`; main is not overwritten. No AGENTS.md was present. Development remains synthetic/offline/loopback only.
+
+- [x] Phase 1: permanent IDs 1–8, selection names/IDs/ranges/presets, profiles, legacy option compatibility and target-free plan preview. **29 CLI tests passed**.
+- [x] Phase 2: explicit dependency phases, persistent adapter status/identity/metrics, one native request owner, durable queues, cancellation and partial coverage. Existing native safeguards retained.
+- [x] Phase 3: all eight reviewed Linux binaries available and version/help verified. Official checksum-verified dnsx/httpx/Katana/Nuclei installation exercised. Four direct active paths explicitly blocked; native DNS/HTTP/crawl/reviewed-check alternatives work. Network namespace creation failed (`/proc/self/uid_map` read-only); no sandbox bypass or HTTPS-path proxy claim was introduced. jsluice unversioned builds now require a reviewed executable fingerprint.
+- [x] Phase 4: bounded RIPE Stat ASN/IP and CDX metadata adapters, separate provider resolver/budgets/cache, explainable captured-evidence technology detection, non-destructive route/parameter grouping and configurable versioned priority. **25 enrichment fixture tests passed**; live provider queries have not run.
+- [x] Phase 5: schema 1→2 additive migration; V1 read compatibility; hash-verified artifact copies; separate offline/active rerun identities, lineage and comparisons. **8 rerun tests passed**, including unchanged parent file hashes and analyst decisions, zero-network offline reanalysis, fresh localhost recollection, malformed evidence and strict preflight.
+- [x] Phase 6 implementation: searchable offline views/exports for tools, IP/ASN, history, technologies, route groups, priority and lineage. README, architecture/tools guidance, V2 examples, compatibility evidence and CI smoke commands updated.
+- [x] Phase 7 implementation/release preparation: full suites, clean install, commands, docs, CI and focused implementation commit `de5b512` complete. Review branch publication and PR outcome are recorded separately below.
+
+Latest executed combined suite: **186 passed**, no skips, Linux/Python 3.12.14, 7.62 seconds, with real Gitleaks and reviewed jsluice paths supplied. V1 baseline before changes: **113 passed**, 6.15 seconds. Native Windows/Python 3.13, live providers and graphical browser remain unexecuted; do not infer their success from CI configuration.
+
+New modules: `tool_registry`, `selectors`, `commands_v2`, `orchestrator`, `integrations`, `schema_v2`, `reruns`, and `enrichment/{providers,asn,wayback,technology,grouping,prioritization}`. `engine.py` is reduced from 615 to 521 lines; `cli.py` remains a small entry point at 234 lines, with new commands/orchestration in focused modules. Existing scope, scheduler, database evidence and report code are reused.
+
+Resume continues a compatible run and its remaining caps. Rerun copies verified evidence into a fresh directory, never copies completed work queues or analyst confirmation into new findings, and does not inherit provider traffic implicitly. Offline parent HTTP observations retain their original collection time; they do not establish new liveness. Closed baseline reads use SQLite immutable mode to avoid WAL/SHM sidecar writes. Imported hosts are checked against current scope before DNS enrichment.
+
+Checkpoint: implementation/release checks are complete; publish the dedicated review branch and attempt a draft PR. Outputs remain excluded from Git.
+
+
+### V2 release verification
+
+- Fresh hash-pinned pip installation at `/workspace/reconmap-v2-install`, editable package **0.2.0**, then the same full suite: **186 passed**, no skips, 7.54 seconds. `pip check` found no broken requirements. Main `.venv` `uv pip check` reports all 24 packages compatible. `compileall` and Git whitespace checks passed.
+- `uv lock --offline` / `uv sync --frozen --offline --extra test` updated only the project version to 0.2.0. Existing dependency pins/hashes remain unchanged; the frozen pip export matches `requirements.lock` apart from generated command comments.
+- `reconmap tools doctor` verified actual version/help and executable identities for all eight installed Linux tools. Only local jsluice/Gitleaks data integrations actually ran; public Subfinder/URLFinder collection and direct active binary target execution did not.
+- Numbered full-selection demo and real loopback full-selection scan ran with all executable overrides. Four active binary stages were truthfully `blocked-by-policy`, passive providers skipped in demo/lab, and jsluice/Gitleaks completed. Native loopback collection made **16 GET requests**; tech/dedup/priority completed and ASN/Wayback skipped. Exit **2** is expected incomplete requested external coverage, not a hidden binary success. The lab fixture server was stopped afterward.
+- Real native DNS-only alternative ran for `localhost` in lab scope: A/AAAA loopback records were captured and **zero HTTP requests** sent; selected dnsx direct execution remained blocked.
+- Real offline jsluice/Gitleaks reruns from both the V2 demonstration and an actual V1 parent completed with **zero target/provider requests**; parent file hashes/directory entries remained unchanged. Derived runs recorded independent lineage and candidate findings. Resume/report/lineage regeneration preserved all request counters.
+- Interrupted evidence copying now finalizes an inspectable checkpoint/report and resumes verified copies from the same parent/config/artifact set. Copies publish atomically after hash validation, do not replace changed child evidence, and consumed copying time persists in the run budget. Original analyst decisions remain immutable and are referenced in lineage.
+- Tests include scope/DNS/redirect/encoding regressions, armed active-binary rejection, incompatible unversioned builds, provider cancellation/Retry-After/budgets/cache, bounded durable queues, analytic grouping, explainable scores and immutable rerun comparisons.
+
+V2 delivery outputs:
+
+- `/workspace/TheGodRecon/recon-output/v2-validation/example.com/reports/index.html` — numbered full offline fixture selection; native results plus explicit external policy blocks.
+- `/workspace/TheGodRecon/recon-output/v2-validation/1_example.com/reports/index.html` — completed offline reanalysis of the V2 parent, with real jsluice/Gitleaks and lineage.
+- `/workspace/TheGodRecon/recon-output/v2-validation/2_example.com/reports/index.html` — completed offline reanalysis of the preserved V1 parent.
+- `/workspace/TheGodRecon/recon-output/v2-validation/127.0.0.1/reports/index.html` — actual loopback full selection with native/local tools, 16 GETs.
+- `/workspace/TheGodRecon/recon-output/v2-validation/localhost/reports/index.html` — actual native DNS-only fallback.
+- Reviewable source lives on local branch `feature/thegodrecon-v2`; GitHub publication/PR outcome will be recorded below. No public targets, live metadata providers or credential validation were contacted.
+
+Outstanding execution checks: native Windows/Python 3.13/console lifecycle, graphical browser and live provider collection against separately authorized scope. The supplied CI matrix is configuration, not evidence that these checks ran. There is no verified active-subprocess egress isolation backend; those four direct integrations remain blocked on every platform. Unknown jsluice fingerprints remain incompatible until reviewed. Raw evidence remains sensitive and disk caps remain approximate rather than an OS quota.
+
+
+### V2 review publication preparation
+
+Implementation commit: `de5b512`. Documentation/examples/compatibility/CI are a separate focused commit. Planned review branch: `feature/thegodrecon-v2`. Main was verified unchanged at `fbf268c` before publication. Synthetic fixture scopes are now explicitly rejected as authority for fresh real recollection without a current YAML config. Owned RIPE/CDX request reservations appear separately from target HTTP and unknown external-provider counts in reports.
+
+GitHub API read returned **Forbidden** during release preparation; Git transport remains available. A draft PR will be attempted after the branch is published, and its actual outcome recorded rather than claiming a PR exists.
+
+Publication checks: Gitleaks inspected all **58** tracked/review files; its only two findings were the deliberate synthetic tokens in the original demo/test fixtures. Generated scan evidence, caches and installed binaries are excluded. After the final provider-counter/report additions, the affected core/engine subset also passed **32 tests** in 3.09 seconds.

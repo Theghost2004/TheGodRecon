@@ -1,0 +1,8 @@
+# Local-only analysis. Change local_inputs to existing files you may analyze.
+version: 2
+scope:
+  hosts: [example.com]
+profile: offline
+enrichments: [tech, dedup, priority]
+local_inputs: []
+tools: {}

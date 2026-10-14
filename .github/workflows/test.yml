@@ -32,8 +32,15 @@ jobs:
           reconmap demo --output-root demo-output
           reconmap scan --resume demo-output/example.com
           reconmap report --run demo-output/example.com
+          reconmap tools list
+          reconmap plan --target example.com --config examples/scope.yaml --tools all --enrich all --json
+          reconmap demo --output-root v2-demo-output --enrich tech,dedup,priority
+          reconmap rerun --from v2-demo-output/example.com --modules analysis --mode offline --enrich tech,dedup,priority
+          reconmap report --run v2-demo-output/1_example.com
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: demo-${{ matrix.os }}-${{ matrix.python }}
-          path: demo-output/
+          path: |
+            demo-output/
+            v2-demo-output/
