@@ -107,7 +107,7 @@ def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path 
             print("Dependency preflight failed: "+", ".join(missing)+". Run reconmap doctor.",file=sys.stderr)
             return 4
     path,manifest=prepare_run(config,target,output_root,resume,baseline)
-    print("Effective scope: "+json.dumps(config.scope.model_dump(),sort_keys=True))
+    print("Effective scope: "+redact(json.dumps(config.scope.model_dump(),sort_keys=True)))
     print(f"Mode {config.mode}; ceilings {config.budgets.requests} HTTP requests, {config.budgets.urls_per_host} URLs/host, depth {config.budgets.depth}, {config.budgets.per_host_rps:g}/s/host, {config.budgets.minutes:g} minutes")
     print(f"Run directory: {path}")
     with RunLock(path,break_lock):

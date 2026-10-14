@@ -66,8 +66,10 @@ def test_plan_is_read_only_and_does_not_request_targets(tmp_path, monkeypatch, c
     monkeypatch.setattr('reconmap.commands_v2.identify', identify)
     async def forbidden(*args, **kwargs): raise AssertionError('network attempt')
     monkeypatch.setattr('aiohttp.ClientSession._request', forbidden)
-    assert main(['plan', '--target', 'example.com', '--config', str(path), '--tools', 'all', '--json']) == 0
-    plan = json.loads(capsys.readouterr().out)
+    assert main(['plan', '--target', 'example.com/?token=fixture-secret-value', '--config', str(path), '--tools', 'all', '--json']) == 0
+    output = capsys.readouterr().out
+    assert 'fixture-secret-value' not in output
+    plan = json.loads(output)
     assert [t['id'] for t in plan['selected_tools']] == list(range(1, 9))
     assert len([t for t in plan['selected_tools'] if t['status'] == 'blocked-by-policy']) == 4
     assert not (tmp_path / 'recon-output').exists()

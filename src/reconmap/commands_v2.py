@@ -8,6 +8,7 @@ from .orchestrator import build_plan, print_plan, selected_names
 from .selectors import resolve_selection
 from .storage import read_manifest
 from .tool_registry import BY_NAME, REGISTRY, execution_status
+from .security import redact_data
 
 
 def add_scan_arguments(parser, *, rerun=False):
@@ -64,7 +65,8 @@ def handle(args):
             raise ConfigError("Plan requires --target or --resume")
         tools = {n: identify(n, config.tools.get(n)) for n in selected_names(config)}
         plan = build_plan(config, target, tools)
-        print(json.dumps(plan, indent=2)) if args.json else print_plan(plan)
+        preview = redact_data(plan)
+        print(json.dumps(preview, indent=2)) if args.json else print_plan(preview)
         return 0 if plan["safe_to_execute"] else 4
     if args.command == "rerun":
         from .reruns import rerun
