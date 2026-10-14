@@ -13,10 +13,12 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from .security import redact
+from .tool_registry import BY_NAME, REGISTRY
 
-PINS = {"subfinder": "2.17.0", "urlfinder": "0.0.3", "dnsx": "1.3.1", "httpx": "1.12.0", "katana": "1.8.0", "gitleaks": "8.30.1", "nuclei": "3.11.1", "jsluice": "0ddfab153e060a9eeaded4d8669233f7c071e7e4"}
-CAPABILITIES = {"subfinder": "passive host discovery", "urlfinder": "historical URL discovery", "gitleaks": "offline redacted secret detection", "jsluice": "offline AST endpoint enrichment", "dnsx": "disabled: native DNS pins permitted connection addresses", "httpx": "disabled: native HTTP enforces DNS, path and aggregate budgets", "katana": "disabled: native crawler enforces all subrequest restrictions", "nuclei": "disabled: native reviewed exposure profile enforces shared budgets"}
-REQUIRED_FLAGS = {"subfinder": ["-json", "-collect-sources", "-disable-update-check", "-rate-limit"], "urlfinder": ["-jsonl", "-collect-sources", "-disable-update-check", "-rate-limit"], "gitleaks": ["--redact", "--report-format", "--report-path"], "jsluice": ["urls", "secrets"]}
+PINS = {tool.name: tool.version for tool in REGISTRY}
+CAPABILITIES = {tool.name: tool.capability for tool in REGISTRY}
+REQUIRED_FLAGS = {"subfinder": ["-json", "-collect-sources", "-disable-update-check", "-rate-limit"], "urlfinder": ["-jsonl", "-collect-sources", "-disable-update-check", "-rate-limit"], "gitleaks": ["--redact", "--report-format", "--report-path"], "jsluice": ["urls", "secrets"], "dnsx": ["-json", "-rate-limit", "-disable-update-check"], "httpx": ["-json", "-rate-limit", "-disable-update-check"], "katana": ["-jsonl", "-crawl-duration", "-disable-update-check"], "nuclei": ["-jsonl", "-no-interactsh", "-disable-update-check"]}
+REVIEWED_JSLUICE_HASHES = {"0fe91d8b9a88b1029e90b6265417b4a34b3e617b0959b4d2aceea219d7917c43"}
 
 
 @dataclass
@@ -29,9 +31,11 @@ class ToolInfo:
     supported: bool
     capability: str
     reason: str
+    compatible: bool = False
 
     def record(self) -> dict:
-        return asdict(self)
+        spec = BY_NAME[self.name]
+        return {**asdict(self), "id": spec.id, "risk": spec.risk, "fallback": list(spec.fallback), "adapter_version": 2}
 
 
 def terminate_tree(proc: subprocess.Popen) -> None:
@@ -69,7 +73,7 @@ def identify(name: str, override: str | None = None) -> ToolInfo:
         text = result.stdout + result.stderr
         if name == "jsluice":
             version = "unversioned; executable sha256 identity"
-            verified = "jsluice - Extract URLs" in text
+            verified = "jsluice - Extract URLs" in text and sha in REVIEWED_JSLUICE_HASHES
         else:
             match = re.search(r"\bv?(\d+\.\d+\.\d+)\b", text)
             version = match[1] if match else "unrecognized"
@@ -79,9 +83,12 @@ def identify(name: str, override: str | None = None) -> ToolInfo:
         if name == "httpx" and "projectdiscovery" not in (help_text + text).lower():
             verified = False
         flags_present = all(f in help_text for f in REQUIRED_FLAGS.get(name, []))
-        supported = verified and flags_present and result.code == help_result.code == 0 and not CAPABILITIES[name].startswith("disabled")
-        reason = "reviewed flags present; version compatible" if supported else "unreviewed version/flags or unsupported scope controls; core fallback available"
-        return ToolInfo(name, path, version, sha, True, supported, CAPABILITIES[name], reason)
+        compatible = verified and flags_present and result.code == help_result.code == 0
+        supported = compatible and not BY_NAME[name].policy_reason
+        reason = BY_NAME[name].policy_reason or ("reviewed flags present; version compatible" if supported else "unreviewed version/flags; install the reviewed binary")
+        if name == "jsluice" and not verified:
+            reason = "Unversioned jsluice build hash has not been reviewed; native Tree-sitter remains available. Review the build and add its fingerprint before execution"
+        return ToolInfo(name, path, version, sha, True, supported, CAPABILITIES[name], reason, compatible)
     except (OSError, ValueError, TimeoutError) as exc:
         return ToolInfo(name, path, "failed version check", sha, True, False, CAPABILITIES[name], redact(f"{type(exc).__name__}: {exc}"))
 
@@ -153,6 +160,8 @@ async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 
 
 
 def command(info: ToolInfo, target_host: str, cwd: Path, seconds: int, input_path: Path | None = None, sources: list[str] | None = None) -> list[str]:
+    if BY_NAME[info.name].policy_reason:
+        raise ValueError("blocked-by-policy: " + BY_NAME[info.name].policy_reason)
     if not info.supported or not info.path:
         raise ValueError(f"Unsupported {info.name}: {info.reason}")
     if info.name == "subfinder":
@@ -177,13 +186,17 @@ def parse_records(name: str, text: str) -> tuple[list[dict], list[str]]:
             return data, []
         except (ValueError, TypeError) as exc:
             return [], [str(exc)]
-    fields = {"subfinder": "host", "urlfinder": "url", "jsluice": "url"}
+    fields = {"subfinder": "host", "urlfinder": "url", "jsluice": "url", "dnsx": "host", "httpx": "url", "katana": "request", "nuclei": "matched-at"}
     for i, line in enumerate(text.splitlines(), 1):
         if not line.strip():
             continue
         try:
             record = json.loads(line)
-            if not isinstance(record, dict) or not isinstance(record.get(fields[name]), str):
+            if name == "katana" and isinstance(record, dict):
+                request = record.get("request")
+                if not isinstance(request, dict) or not isinstance(request.get("endpoint"), str):
+                    raise ValueError("Missing Katana request.endpoint")
+            elif not isinstance(record, dict) or not isinstance(record.get(fields[name]), str):
                 raise ValueError(f"Missing string field {fields[name]}")
             if name == "jsluice" and not isinstance(record.get("method", ""), str):
                 raise ValueError("Invalid method field")

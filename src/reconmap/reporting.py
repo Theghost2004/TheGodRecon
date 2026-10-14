@@ -10,19 +10,27 @@ from pathlib import Path
 
 from .security import redact, redact_data
 from .storage import Store, atomic_json, read_manifest, safe_csv
+from .schema_v2 import V2_TABLES
 
 
 def readonly_rows(run: Path, table: str) -> list[dict]:
-    if table not in {"urls","findings","artifacts","stages"}:
+    if table not in {"urls","findings","artifacts","stages"} | V2_TABLES:
         raise ValueError("Invalid diff table")
     uri = (run / "recon.sqlite").resolve().as_uri() + "?mode=ro"
+    wal = run / "recon.sqlite-wal"
+    if not wal.exists() or wal.stat().st_size == 0:
+        uri += "&immutable=1"
     with sqlite3.connect(uri, uri=True) as db:
         db.row_factory = sqlite3.Row
+        if table in V2_TABLES and db.execute("PRAGMA user_version").fetchone()[0] < 2:
+            return []
         return [dict(row) for row in db.execute(f"SELECT * FROM {table}")]
 
 
 def compare_runs(baseline: Path, current: Path) -> dict:
     old_manifest, new_manifest = read_manifest(baseline), read_manifest(current)
+    if (baseline / "run.lock").exists() or old_manifest["state"] == "running" or ((baseline / "recon.sqlite-wal").exists() and (baseline / "recon.sqlite-wal").stat().st_size):
+        raise ValueError("Baseline must be stopped, unlocked and checkpointed before immutable comparison")
     old_config = json.loads((baseline/"config.effective.json").read_text(encoding="utf-8"))
     new_config = json.loads((current/"config.effective.json").read_text(encoding="utf-8"))
     compatible = old_config["scope"] == new_config["scope"] and old_manifest["host"] == new_manifest["host"]
@@ -31,6 +39,8 @@ def compare_runs(baseline: Path, current: Path) -> dict:
         warnings.append("Scope/seed differ; snapshots are not directly comparable")
     if old_config != new_config:
         warnings.append("Collection settings differ; absence may reflect different coverage")
+    if old_manifest["state"] != "completed" or old_manifest.get("limits"):
+        warnings.append("Baseline coverage is incomplete; additions may reflect newly collected coverage")
     if new_manifest["state"] != "completed" or new_manifest.get("limits"):
         warnings.append("Current coverage is incomplete; absence is not proof of unavailability")
     old = {r["url"]:r for r in readonly_rows(baseline,"urls")}
@@ -68,7 +78,7 @@ def generate_report(run: Path, store: Store | None = None) -> None:
     store = store or Store(run)
     try:
         config = redact_data(store.meta("config",{}))
-        data = {table:redact_data(store.rows(table)) for table in ("runs","hosts","dns","origins","urls","parameters","observations","artifacts","relationships","findings","stages","jobs","analyst_actions")}
+        data = {table:redact_data(store.rows(table)) for table in ("runs","hosts","dns","origins","urls","parameters","observations","artifacts","relationships","findings","stages","jobs","analyst_actions","tool_executions","historical_urls","infrastructure","technologies","url_groups","url_group_members","endpoint_priority","lineage")}
         reports = run/"reports"
         reports.mkdir(exist_ok=True)
         atomic_json(reports/"findings.json",data["findings"])
@@ -77,9 +87,9 @@ def generate_report(run: Path, store: Store | None = None) -> None:
             with (run/"normalized"/(table+".jsonl")).open("w",encoding="utf-8") as f:
                 for row in rows:
                     f.write(json.dumps(row,ensure_ascii=True)+"\n")
-        for table in ("findings","urls","parameters"):
+        for table in ("findings","urls","parameters","historical_urls","infrastructure","technologies","url_groups","endpoint_priority"):
             rows=data[table]
-            keys=list(rows[0]) if rows else {"findings":["fingerprint","rule","subject","title","priority","confidence","severity","validation"],"urls":["url","state","status"],"parameters":["url","name","location","source"]}[table]
+            keys=list(rows[0]) if rows else {"findings":["fingerprint","rule","subject","title","priority","confidence","severity","validation"],"urls":["url","state","status"],"parameters":["url","name","location","source"]}.get(table, ["No records"])
             with (reports/(table+".csv")).open("w",encoding="utf-8-sig",newline="") as f:
                 writer=csv.writer(f)
                 writer.writerow(keys)
@@ -88,8 +98,11 @@ def generate_report(run: Path, store: Store | None = None) -> None:
         findings=sorted(data["findings"],key=lambda f:(-f["priority"],f["fingerprint"]))
         summary = [f"# reconmap — {manifest['host']}","",f"State: {manifest['state']}",f"Transport: {manifest.get('transport')}",f"Requests reserved: {manifest.get('requests',0)} (offline fixture operations in demo)",f"URLs: {len(data['urls'])}; findings/leads: {len(findings)}", "", "Findings are investigation leads, not confirmed vulnerabilities. Priority is not exploit probability.", "", "## Scope", "", "```json",json.dumps(config.get("scope",{}),indent=2),"```","", "## Modules and coverage", ""]
         summary += [f"- {markdown_safe(s['name'])}: {markdown_safe(s['state'])} — {markdown_safe(s['detail'])}" for s in data["stages"]]
+        summary += ["", f"Owned metadata-provider requests reserved: {manifest.get('owned_provider_requests',0)}. External Subfinder/URLFinder provider counts are unknown."]
         summary += ["", "## Prioritized leads", ""]
         summary += [f"- {f['priority']} / {f['confidence']} / {f['validation']}: {markdown_safe(f['title'])} — {markdown_safe(f['subject'])}" for f in findings]
+        if data["lineage"]:
+            summary += ["", "## Rerun evidence", "", "Reused HTTP observations refer to the parent collection time. Offline reanalysis does not establish current liveness. Parent analyst decisions remain in the original run.", ""]
         summary += ["", "## Data handling", "", "Reports and normalized exports are pattern-redacted; review before sharing. Raw inputs under assets/ are restricted local evidence and may contain sensitive data. Delete the complete run directory for retention cleanup after closing scans/reports. No retention job runs automatically."]
         (reports/"summary.md").write_text("\n".join(summary)+"\n",encoding="utf-8")
         records=[]
@@ -100,11 +113,16 @@ def generate_report(run: Path, store: Store | None = None) -> None:
         for name in ("new_assets","changed_assets","not_observed_this_time","new_findings","findings_not_observed"):
             changes.extend({"change":name,**(item if isinstance(item,dict) else {"url":item})} for item in comparison.get(name,[]))
         data["changes"]=changes
-        for section in ("hosts","origins","urls","findings","stages","parameters","observations","changes"):
+        views = ("hosts","dns","origins","urls","endpoint_priority","findings","tool_executions","stages","historical_urls","infrastructure","technologies","url_groups","url_group_members","parameters","observations","lineage","changes")
+        for section in views:
             rows=findings if section=="findings" else data[section]
             body=[]
             for row in rows:
                 record={"section":section,**row}
+                if record.get("status") is None and row.get("state") is not None:
+                    record["status"] = row["state"]
+                if section == "endpoint_priority":
+                    record["priority"] = row["score"]
                 index=len(records); records.append(record)
                 # No scanned URL becomes an automatic resource or a clickable executable scheme.
                 body.append(f'<details data-record="{index}"><summary>{html.escape(str(row.get("title") or row.get("url") or row.get("host") or row.get("name") or row.get("subject") or section))}</summary><pre>{html.escape(json.dumps(row,indent=2,ensure_ascii=False))}</pre></details>')
@@ -122,8 +140,9 @@ def generate_report(run: Path, store: Store | None = None) -> None:
 <style>body{{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem;background:#101827;color:#e5ecfa}}input,select{{padding:.6rem;margin:.3rem}}details{{border:1px solid #43516b;margin:.4rem 0;padding:.5rem}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}a{{color:#9fccff}}[hidden]{{display:none}}small{{color:#bbcae0}}</style>
 <h1>reconmap: {html.escape(manifest['host'])}</h1><p>State: {html.escape(manifest['state'])} · Transport: {html.escape(manifest.get('transport',''))} · Requests reserved: {manifest.get('requests',0)}</p>
 <p>Investigation leads require manual validation. Raw artifacts may contain sensitive content. No target resource is loaded by this report.</p>
+<p>Historical URLs are archive metadata, not current liveness. Rerun observations may be reused from a parent's collection timestamp. Technology confidence does not confirm a software version or vulnerability.</p>
 <details><summary>Effective scope and budgets</summary><pre>{html.escape(json.dumps(config,indent=2))}</pre></details>
-<label>Search <input id="search" type="search"></label><label>Section <select id="filter"><option value="">All</option>{''.join(f'<option>{s}</option>' for s in ('hosts','origins','urls','findings','stages','parameters','observations','changes'))}</select></label>
+<label>Search <input id="search" type="search"></label><label>Section <select id="filter"><option value="">All</option>{''.join(f'<option>{s}</option>' for s in views)}</select></label>
 <label>Status <select id="status"><option value="">All</option></select></label><label>Confidence <select id="confidence"><option value="">All</option></select></label><label>Source <select id="source"><option value="">All</option></select></label><label>Minimum priority <input id="priority" type="number" min="0" max="100" style="width:5rem"></label>
 {''.join(sections)}<h2>Applications and relationship view</h2>{relations}<h2>Restricted source artifacts</h2><ul>{artifacts}</ul><h2>Comparison</h2><pre>{diff}</pre>
 <script id="data" type="application/json">{payload}</script><script>{REPORT_SCRIPT}</script></html>'''

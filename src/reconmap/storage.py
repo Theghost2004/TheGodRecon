@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from .config import ScanConfig, normalize_url
 
-SCHEMA = 1
+SCHEMA = 2
 POLICY_REVISION = 2
 
 
@@ -44,7 +44,7 @@ def validate_run_tree(run: Path) -> None:
 
 
 def artifact_path(run: Path, relative: str) -> Path:
-    if not re.fullmatch(r"assets/(?:js|maps|content)/[0-9a-f]{64}\.(?:js|json|bin)", relative):
+    if not isinstance(relative, str) or not re.fullmatch(r"assets/(?:js|maps|content)/[0-9a-f]{64}\.(?:js|json|bin)", relative):
         raise ValueError("Invalid artifact path in run database")
     path = run / relative
     if not path.resolve().is_relative_to(run.resolve()):
@@ -159,25 +159,32 @@ CREATE TABLE IF NOT EXISTS jobs(url TEXT PRIMARY KEY, depth INTEGER, source TEXT
 
 
 class Store:
-    def __init__(self, run: Path):
+    def __init__(self, run: Path, readonly: bool = False):
         self.run = run
         for name in ("recon.sqlite", "recon.sqlite-wal", "recon.sqlite-shm", "recon.sqlite-journal"):
             path = run / name
             if path.is_symlink() or path.is_junction() or (path.exists() and (not path.is_file() or path.stat().st_nlink > 1)):
                 raise ValueError("Unsafe database file in run directory")
-        self.conn = sqlite3.connect(run / "recon.sqlite")
+        if readonly and (run / "recon.sqlite-wal").exists() and (run / "recon.sqlite-wal").stat().st_size:
+            raise ValueError("Parent database must be checkpointed and closed before immutable reuse")
+        self.conn = sqlite3.connect((run / "recon.sqlite").resolve().as_uri() + "?mode=ro&immutable=1", uri=True) if readonly else sqlite3.connect(run / "recon.sqlite")
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA trusted_schema=OFF")
-        self.conn.execute("PRAGMA journal_mode=WAL")
-        self.conn.execute("PRAGMA synchronous=FULL")
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, SCHEMA):
+        if version not in (0, 1, SCHEMA):
             self.conn.close()
             raise ValueError(f"Unsupported database schema {version}")
-        # Migration 0 -> 1. Later versions require explicit migrations here.
-        self.conn.executescript(DDL)
-        self.conn.execute(f"PRAGMA user_version={SCHEMA}")
-        self.conn.commit()
+        self.schema = version
+        if not readonly:
+            self.conn.execute("PRAGMA journal_mode=WAL")
+            self.conn.execute("PRAGMA synchronous=FULL")
+            if version == 0:
+                self.conn.executescript("BEGIN IMMEDIATE;\n" + DDL + "\nPRAGMA user_version=1;\nCOMMIT;")
+                version = 1
+            if version == 1:
+                from .schema_v2 import DDL as NEW_DDL
+                self.conn.executescript("BEGIN IMMEDIATE;\n" + NEW_DDL + "\nPRAGMA user_version=2;\nCOMMIT;")
+            self.schema = SCHEMA
 
     def execute(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
         cursor = self.conn.execute(sql, args)
@@ -185,8 +192,11 @@ class Store:
         return cursor
 
     def rows(self, table: str) -> list[dict]:
-        if table not in {"runs", "hosts", "dns", "origins", "urls", "observations", "parameters", "artifacts", "relationships", "findings", "stages", "jobs", "analyst_actions"}:
+        from .schema_v2 import V2_TABLES
+        if table not in {"runs", "hosts", "dns", "origins", "urls", "observations", "parameters", "artifacts", "relationships", "findings", "stages", "jobs", "analyst_actions"} | V2_TABLES:
             raise ValueError("Unknown table")
+        if self.schema < 2 and table in V2_TABLES:
+            return []
         rows = [dict(row) for row in self.conn.execute(f"SELECT * FROM {table}")]
         if table == "artifacts":
             for row in rows:
@@ -203,6 +213,17 @@ class Store:
 
     def stage(self, name: str, state: str, detail: str = "") -> None:
         self.execute("INSERT OR REPLACE INTO stages VALUES(?,?,?,?)", (name, state, detail, timestamp()))
+        from .tool_registry import BY_NAME
+        if name in BY_NAME:
+            metrics = {"observations": self.conn.execute("SELECT COUNT(*) FROM observations WHERE source=?", (name,)).fetchone()[0],
+                       "findings": self.conn.execute("SELECT COUNT(*) FROM findings WHERE source=?", (name,)).fetchone()[0],
+                       "invocations": self.meta("invocations:" + name, 0)}
+            self.execute("UPDATE tool_executions SET state=?,detail=?,started=CASE WHEN ?='running' THEN COALESCE(started,?) ELSE started END,finished=?,metrics_json=? WHERE name=?",
+                         (state, detail, state, timestamp(), None if state == "running" else timestamp(), json.dumps(metrics), name))
+
+    def register_tool(self, info) -> None:
+        from .tool_registry import BY_NAME, execution_status
+        self.execute("INSERT OR IGNORE INTO tool_executions VALUES(?,?,?,?,?,NULL,NULL,?)", (BY_NAME[info.name].id, info.name, json.dumps(info.record()), execution_status(info), info.reason, "{}"))
 
     def observed(self, subject: str, kind: str, data: object, source: str, identity: str | None = None) -> None:
         self.execute("INSERT OR IGNORE INTO observations(identity,subject,kind,data,source,time) VALUES(?,?,?,?,?,?)", (identity, subject, kind, json.dumps(data), source, timestamp()))
@@ -229,7 +250,7 @@ def read_manifest(run: Path) -> dict:
     if any((run / name).stat().st_size > 1024 * 1024 for name in ("manifest.json", "config.effective.json")):
         raise ValueError("Run metadata exceeds 1 MiB")
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("schema") != SCHEMA or not re.fullmatch(r"[0-9a-f]{32}", str(manifest.get("run_id", ""))) or not isinstance(manifest.get("target"), str) or manifest.get("state") not in {"created", "running", "interrupted", "partial", "completed"}:
+    if not isinstance(manifest, dict) or manifest.get("schema") not in (1, SCHEMA) or not re.fullmatch(r"[0-9a-f]{32}", str(manifest.get("run_id", ""))) or not isinstance(manifest.get("target"), str) or manifest.get("state") not in {"created", "running", "interrupted", "partial", "completed"}:
         raise ValueError("Invalid or unsupported run manifest")
     config = ScanConfig.model_validate_json((run / "config.effective.json").read_text(encoding="utf-8"))
     if manifest.get("config_digest") != config.digest() or normalize_url(manifest["target"]) != manifest["target"] or urlsplit(manifest["target"]).hostname != manifest.get("host"):
@@ -241,6 +262,8 @@ def read_manifest(run: Path) -> dict:
         raise ValueError("Invalid baseline in run manifest")
     if type(manifest.get("requests", 0)) is not int or manifest.get("requests", 0) < 0 or not isinstance(manifest.get("transport", ""), str):
         raise ValueError("Invalid request count/transport in run manifest")
+    if type(manifest.get("owned_provider_requests", 0)) is not int or manifest.get("owned_provider_requests", 0) < 0:
+        raise ValueError("Invalid owned provider request count in run manifest")
     return manifest
 
 
