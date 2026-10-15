@@ -180,3 +180,9 @@ Complete checklist, exact commands/results, limits and output paths:
 [docs/V3_ARCHITECTURE.md](docs/V3_ARCHITECTURE.md). Review description:
 [docs/V3_PULL_REQUEST.md](docs/V3_PULL_REQUEST.md). GitHub main now contains the
 V2 merge `ddaae1c`; V3 is prepared on `feature/thegodrecon-v3` above that merge.
+
+V3 publication: implementation `a20e7bd` was pushed and its remote SHA verified.
+Main remains the V2 merge `ddaae1c`. Draft PR creation returned GitHub GraphQL
+`Forbidden`; no PR was created and CI execution has not been inspected. The
+prepared body is `docs/V3_PULL_REQUEST.md`. Review/create at
+https://github.com/Theghost2004/TheGodRecon/pull/new/feature/thegodrecon-v3 .

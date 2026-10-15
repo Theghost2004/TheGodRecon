@@ -119,6 +119,19 @@ external binaries; full-selection demos report unavailable/blocked capabilities.
 
 ## Review publication
 
-The review branch is based on merged V2 main `ddaae1c`. A complete PR description
-is maintained in `docs/V3_PULL_REQUEST.md`; publication outcome is recorded after
-Git transport and PR API checks. Main is not modified by this review workflow.
+- [x] Committed implementation/tests/docs as `a20e7bdbcd9e0333978398f37449f0c6b011686d`
+  on `feature/thegodrecon-v3`, based on merged V2 main `ddaae1c`.
+- [x] Published the branch without force and verified GitHub's remote commit.
+  Main remains `ddaae1c6ad4d3056915f6e4cc341fb3c5aa5c410`; no merge/deployment occurred.
+- [x] Prepared the complete PR description in `docs/V3_PULL_REQUEST.md` and
+  `/workspace/thegodrecon-v3-pr.md`.
+- [ ] Draft PR creation was attempted but GitHub GraphQL returned
+  `Post https://api.github.com/graphql: Forbidden`. **No PR was created**.
+  GitHub Actions results could not be inspected through this API.
+
+Review: https://github.com/Theghost2004/TheGodRecon/compare/main...feature/thegodrecon-v3
+
+Create PR: https://github.com/Theghost2004/TheGodRecon/pull/new/feature/thegodrecon-v3
+
+The final documentation commit records this outcome; generated scan artifacts and
+installed binaries remain local and excluded from the branch.
