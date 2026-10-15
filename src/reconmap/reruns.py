@@ -54,6 +54,7 @@ def reuse_evidence(parent, child, manifest, config, artifacts):
     try:
         parent_manifest = read_manifest(parent)
         synthetic = parent_manifest.get("transport") == "offline-fixtures" or parent_manifest.get("synthetic", False)
+        destination.set_meta("synthetic", synthetic)
         digest = hashlib.sha256(json.dumps(sorted(a["hash"] for a in artifacts)).encode()).hexdigest()
         manifest.update(synthetic=synthetic, lineage={"parent_run_id": parent_manifest["run_id"], "parent_path": str(parent.resolve()), "kind": "offline-reanalysis" if offline else "fresh-selected-recollection", "reused_artifact_count": len(artifacts), "parent_artifact_digest": digest, "parent_config_digest": parent_manifest["config_digest"], "parent_decisions_are_inherited": False, "initialization_pending": True})
         manifest["transport"] = "offline-reanalysis" if offline else "native-http"
@@ -88,6 +89,10 @@ def reuse_evidence(parent, child, manifest, config, artifacts):
             for row in source.rows(table):
                 if "source" in row and table != "provider_cache":
                     row["source"] = "parent:" + row["source"]
+                if table == "observations" and row.get("identity"):
+                    # Fresh request attempt 1 must not collide with the parent's
+                    # http:URL:1 observation and silently lose its new response.
+                    row["identity"] = "parent:" + parent_manifest["run_id"] + ":" + row["identity"]
                 if table == "urls" and not offline:
                     for name in ("status", "title", "content_type", "hash", "bytes", "time"):
                         row[name] = None
@@ -154,10 +159,13 @@ def analyze_reused(scanner):
         if len(body) > scanner.config.budgets.response_bytes:
             raise ConfigError("Reused artifact exceeds analysis cap")
         text = body.decode(errors="replace")
-        secrets(scanner.store, text, artifact["hash"], "reanalysis", synthetic)
+        if "gitleaks" not in scanner.config.modules:
+            secrets(scanner.store, text, artifact["hash"], "reanalysis", synthetic)
         bases = [r[0] for r in scanner.store.conn.execute("SELECT parent FROM relationships WHERE child=? AND kind='response_body'", ("artifact:" + artifact["hash"],)) if r[0].startswith(("http://", "https://"))] or [scanner.manifest["target"]]
         for base in bases:
-            refs = analyze_js(scanner.store, text, base, artifact["hash"], synthetic) if artifact["kind"] == "js" else analyze_map(scanner.store, text, base, artifact["hash"], scanner.config.budgets.response_bytes, synthetic) if artifact["kind"] == "map" else []
+            if "jsluice" in scanner.config.modules:
+                continue
+            refs = analyze_js(scanner.store, text, base, artifact["hash"], synthetic, scan_secrets=False) if artifact["kind"] == "js" else analyze_map(scanner.store, text, base, artifact["hash"], scanner.config.budgets.response_bytes, synthetic, scan_secrets=False) if artifact["kind"] == "map" else []
             for url, provenance in refs:
                 scanner.add_url(url, provenance, "artifact:" + artifact["hash"], fetch=provenance != "inferred_endpoint_non_get")
         scanner.store.execute("UPDATE artifacts SET analyzed=1 WHERE hash=?", (artifact["hash"],))

@@ -61,3 +61,33 @@ Structured JSONL parsers cover the reviewed tool schemas, including dnsx host/re
 ### Provider metadata sources
 
 Wayback: documented Internet Archive CDX interface (`https://web.archive.org/cdx/search/cdx`), exact seed host match, timestamp/original/statuscode/mimetype/digest fields, bounded pages/results, resume keys and no archive-content fetch. RIPE Stat: `https://stat.ripe.net/data/network-info/data.json` and `as-overview/data.json`, queries only already observed authorized public addresses/ASNs. Source documentation: https://github.com/internetarchive/wayback/tree/master/wayback-cdx-server and https://stat.ripe.net/docs/data_api . These adapters do not need paid APIs/LLMs and never turn infrastructure ownership into scope. Provider failures produce partial stages. Local fixtures are verified; live service egress, schemas/rate limits and collection remain untested in this cloud.
+
+
+## V3 execution contract
+
+Selected compatible passive/local tools run first. Local inputs are hashed and
+processed once per tool/input; late-discovered source contexts reuse the saved
+parsed output. Executable SHA-256 is rechecked immediately before launch. Argument
+arrays, timeout/process-group cleanup, stdout/stderr caps and monitored Gitleaks
+report-size limits apply without a shell. File-size monitoring is cooperative,
+not an OS disk quota: one write can overshoot before the monitor kills the process.
+
+Timeout/output-cap exceptions retain their bounded stdout/stderr prefixes. Valid
+complete records are persisted before a failed input gets native fallback. A
+partially malformed input may require native reanalysis of that whole artifact;
+exact observation/finding keys avoid duplicate results. Completed artifacts and
+completed target jobs are reused. Global time, disk, DNS and request budgets never
+reset. Scope-denied URLs, unsafe methods and exhausted budgets remain denied.
+
+`reports/stage-results.json` distinguishes `selected_primary_tool`,
+`actual_execution_engines`, `primary_status`, overall `status`, fallback and
+coverage limitations. Native web functions share the same request owner: their
+`shared_counters_not_additive` accounting group must not be summed across stages.
+Provider subprocess request counts are unknown; owned CDX/RIPE counters are separate.
+The primary binary's actual version, path, hash and compatibility are retained.
+
+No selected external subdomain enumerator means no native equivalent enumeration;
+only existing seed/reference inventory is available. CDX requires prior explicit
+Wayback selection. The four direct active binary blockers listed above remain in
+force on Linux and Windows. Unreviewed jsluice builds retain the native fallback;
+there is no automatic trust/download update.

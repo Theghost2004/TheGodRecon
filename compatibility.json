@@ -1,5 +1,5 @@
 {
-  "checked_date": "2026-10-14",
+  "checked_date": "2026-10-15",
   "python_execution_verified": [
     "3.12.14/linux-x86_64"
   ],
@@ -126,7 +126,7 @@
       "source_commit_inspected": "b58d3f102cf3a2c84cb7f923d05c25c9b1aed84b",
       "license": "MIT",
       "linux_binary_sha256": "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509",
-      "linux_executed": "real offline V2 demo/rerun integration",
+      "linux_executed": "Real V3 per-artifact offline integration in demo, loopback collection and immutable rerun",
       "windows_executed": false,
       "active_execution_enabled": false,
       "passive_execution_enabled": false,
@@ -136,14 +136,16 @@
       "stable_id": 7,
       "risk": "offline",
       "policy_reason": "",
-      "native_fallback": []
+      "native_fallback": [
+        "analysis"
+      ]
     },
     "jsluice": {
       "reviewed_version": "0ddfab153e060a9eeaded4d8669233f7c071e7e4",
       "source_commit_inspected": "0ddfab153e060a9eeaded4d8669233f7c071e7e4",
       "license": "MIT",
       "linux_binary_sha256": "0fe91d8b9a88b1029e90b6265417b4a34b3e617b0959b4d2aceea219d7917c43",
-      "linux_executed": "real offline V2 demo/rerun integration",
+      "linux_executed": "Real V3 per-artifact offline integration in demo, loopback collection and immutable rerun",
       "windows_executed": false,
       "active_execution_enabled": false,
       "passive_execution_enabled": false,
@@ -151,7 +153,9 @@
       "stable_id": 6,
       "risk": "offline",
       "policy_reason": "",
-      "native_fallback": [],
+      "native_fallback": [
+        "analysis"
+      ],
       "unversioned_policy": "Only reviewed executable fingerprints run; other builds use native Tree-sitter until reviewed"
     }
   },
@@ -161,8 +165,8 @@
     "environment.yaml": "0d3d9f7a545db5c525a541d89cead8da8dd8f20f61b6b0c35f0a1beece3adc84",
     "git-head.yaml": "e0232f98b1ab2eb3182a022f1869dc1beb2e5cb76b1376c2df6fcc0d649b3696"
   },
-  "application_version": "0.2.0",
-  "schema_version": 2,
+  "application_version": "0.3.0",
+  "schema_version": 3,
   "provider_integrations": {
     "wayback-cdx": {
       "enabled_by_default": false,
@@ -177,5 +181,15 @@
       "access": "Observed authorized public IP/ASN metadata only"
     }
   },
-  "active_isolation_assessment": "No verified cross-platform egress isolation backend; Linux user/network namespace check failed with read-only uid_map. HTTPS CONNECT cannot enforce path exclusions."
+  "active_isolation_assessment": "No verified cross-platform egress isolation backend; Linux user/network namespace check failed with read-only uid_map. HTTPS CONNECT cannot enforce path exclusions.",
+  "v3_verification": {
+    "platform": "Linux/Python 3.12.14",
+    "public_target_scans": false,
+    "live_provider_calls": false,
+    "windows_executed": false,
+    "python_313_executed": false,
+    "active_binaries_executed": false,
+    "tests": "228 passed, no skips, in both development and fresh hash-pinned installations; Linux/Python 3.12.14",
+    "browser": "Headless Chromium 154.0.8037.57 DOM/script checks passed via local HTML setContent; direct file navigation blocked by managed browser; zero external requests"
+  }
 }

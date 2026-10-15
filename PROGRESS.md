@@ -160,3 +160,23 @@ Publication checks: Gitleaks inspected all **58** tracked/review files; its only
 - Main remains the verified V1 publication (`fbf268c`); no merge, deployment or release publication was performed. Remaining platform/provider checks are still pending as listed above.
 
 Implementation and release-preparation milestones are complete within the stated fail-closed boundaries. The next session can review/merge the branch, inspect actual CI results, and separately verify native Windows/live providers with authorized scope. Direct active binary isolation is a future security mechanism, not an enabled or claimed V2 capability.
+
+
+## V3 implementation — 2026-10-15
+
+- [x] Tool-first local execution and durable stage contracts; safe shared native
+  fallback, partial evidence/checkpoints and bounded process handling.
+- [x] Additive schema 3 normalization, contextual classification, conservative
+  grouping, evidence-aware ranking and four primary report views.
+- [x] **228 passed** in both Linux/Python 3.12 environments with real Gitleaks and
+  jsluice; clean locked installation and headless Chromium report checks passed.
+- [x] Synthetic demo, scoped loopback (13 GETs), no-request resume and immutable
+  offline rerun verified. No public target or discovery provider was scanned.
+- [ ] Native Windows/Python 3.13, graphical filesystem report navigation, live
+  providers and active subprocess containment remain explicitly unverified.
+
+Complete checklist, exact commands/results, limits and output paths:
+[docs/V3_PROGRESS.md](docs/V3_PROGRESS.md). Architecture:
+[docs/V3_ARCHITECTURE.md](docs/V3_ARCHITECTURE.md). Review description:
+[docs/V3_PULL_REQUEST.md](docs/V3_PULL_REQUEST.md). GitHub main now contains the
+V2 merge `ddaae1c`; V3 is prepared on `feature/thegodrecon-v3` above that merge.

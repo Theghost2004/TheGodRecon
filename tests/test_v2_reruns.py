@@ -94,7 +94,8 @@ def test_v1_database_additive_migration_and_readonly_reuse(tmp_path):
     store.close();assert (run/'recon.sqlite').read_bytes()==before
     assert read_manifest(run)['schema']==1
     store=Store(run)
-    assert store.conn.execute('PRAGMA user_version').fetchone()[0]==2
+    from reconmap.storage import SCHEMA
+    assert store.conn.execute('PRAGMA user_version').fetchone()[0]==SCHEMA
     assert store.rows('analyst_actions')[0]['note']=='keep this note'
     store.close()
 
@@ -120,6 +121,13 @@ def test_fresh_active_rerun_uses_new_requests_and_preserves_parent(tmp_path):
         assert hits==['/','/'] and tree_hash(parent)==before
         child=tmp_path/'1_127.0.0.1';manifest=read_manifest(child)
         assert manifest['requests']==1 and manifest['state']=='partial'
+        store=Store(child)
+        try:
+            assert any(r['kind']=='http' and r['source']=='native' for r in store.rows('observations'))
+            current=[json.loads(r['data']) for r in store.rows('normalized_records')]
+            assert current and current[0]['current_status']==200
+            assert current[0]['current_http'] and current[0]['prior_http']
+        finally:store.close()
         store=Store(child)
         assert store.rows('tool_executions')[0]['state']=='blocked-by-policy'
         assert store.rows('urls')[0]['title']=='Collection 2'

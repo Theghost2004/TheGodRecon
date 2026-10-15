@@ -1,9 +1,82 @@
-# TheGodRecon V2 (reconmap 0.2.0)
+# TheGodRecon V3 (reconmap 0.3.0)
 
 A local Python CLI for explicitly authorized reconnaissance. It creates a scoped asset map, durable SQLite evidence, static-analysis leads and a searchable offline HTML report. No account, paid service, LLM or telemetry is required. There are no exploitation, credential-validation, form-submission or resource-claiming features.
 
 
-## V2 selection, plans and profiles
+## V3: tool-first collection and an evidence-backed shortlist
+
+Explicitly selected, compatible **Subfinder, URLFinder, jsluice and Gitleaks** run
+before their available fallbacks. Unselected installed tools never execute.
+JavaScript and secret tools checkpoint each captured artifact: successful inputs
+are not reprocessed on resume or on later crawl waves. A failed/partial tool keeps
+its valid output, then uses the existing native analyzer for unfinished inputs.
+The Tree-sitter method check still vetoes unsafe scheduling even when jsluice
+succeeds. Source maps use the native embedded-source parser as a complementary
+capability. Native-only module selections retain their existing behavior.
+
+**dnsx/httpx/Katana/Nuclei remain blocked as independent active subprocesses.**
+There is no verified Linux or Windows containment backend enforcing their DNS/IP,
+HTTPS path, redirect, method and aggregate request policies. Their selected stages
+use the existing native scheduler and record the exact blocker and actual engine.
+A fallback never changes scope, resets budgets, permits POSTs, or grants provider
+access. Subfinder has no equivalent native enumerator. URLFinder can fall back to
+CDX only when `wayback` was already explicitly enabled; successful URLFinder
+collection skips redundant CDX enumeration. Missing/failed requested external
+coverage remains visible as partial (exit 2), even when fallback is useful.
+
+The offline dashboard now focuses on **Live Assets**, **Interesting Endpoints**,
+**Potential Exposures**, and **All Results**. Each candidate explains its
+classification, reachability, coarse review score, evidence confidence, sources,
+and suggested non-destructive manual check. Raw findings, analyst decisions,
+tool accounting, history, technologies and evidence remain accessible in details
+and exports. Local processing requires no additional dependency or service.
+
+Contextual classification uses path segments, MIME, response status, forms and
+preserved signatures. `/assets/css/adminlte.min.css` stays low-value inventory;
+`/admin/login` is an application lead; 401/403 is a restriction, never proof of an
+access-control failure. Matching current `.git/HEAD` evidence can outrank names.
+Soft 404s, errors, redirects, static/build assets and synthetic observations are
+downranked. Historical, inferred and reused parent evidence never establish fresh
+liveness. Known HTTP methods, explicit ports, path case, query values/repetitions
+and authorization-context identities remain separate.
+
+Normalization, grouping and investigation ranking are now core local processing,
+including when `--enrich none` is used. The existing `dedup`/`priority` selectors
+remain accepted; `tech`, `asn` and `wayback` stay opt-in. Existing priority weight
+keys/config digests are preserved; output records identify scoring rule **2**.
+Scores use five-point steps and separate review interest, confidence, reachability,
+impact assessment and unassessed vulnerability severity. Groups hide repeated
+cards, preserve every exact member and never delete source evidence. Methodless
+tool duplicates link to known requests without inventing a method or response.
+
+Useful additional outputs:
+
+- `reports/investigation.json`: run summary, shortlist and complete request inventory.
+- `reports/stage-results.json`: selected/actual engines, executable identity,
+  fallback, errors, limitations, artifacts, duration and measurable counters.
+- `normalized/normalized_records.jsonl` and `investigation_candidates.jsonl`:
+  traceable exact request records and rankings; corresponding CSV exports exist.
+- SQLite **2→3** migration adds only these derived records and stage results;
+  versions 1/2/3 remain readable. Original evidence and analyst decisions survive.
+
+To verify V3 without contacting targets or providers:
+
+```text
+reconmap demo --output-root ./v3-output
+reconmap demo --tools all --enrich all --output-root ./v3-output
+reconmap scan --resume ./v3-output/example.com
+reconmap report --run ./v3-output/example.com
+reconmap rerun --from ./v3-output/example.com --modules analysis --mode offline
+python -m pytest -q
+```
+
+The full-selection demo intentionally returns exit 2 for unavailable/blocked tools.
+Install reviewed offline binaries and pass `--tool NAME=PATH` to exercise them.
+See [V3 architecture and limitations](docs/V3_ARCHITECTURE.md) and
+[verification checklist](docs/V3_PROGRESS.md) for actual execution evidence.
+
+
+## Selection, plans and profiles
 
 The permanent registry IDs are **1 Subfinder, 2 URLFinder, 3 dnsx, 4 ProjectDiscovery httpx, 5 Katana, 6 jsluice, 7 Gitleaks, 8 Nuclei**. `--tools` selects executables; singular `--tool NAME=PATH` configures their paths. A selection runs only those external tools and necessary internal safety/analysis/native alternatives. Selecting Subfinder alone does not start HTTP crawling. Selecting local tools alone needs `local_inputs` or a parent run; missing inputs are reported as skipped.
 
@@ -29,11 +102,11 @@ Replace the illustrative `authorized.example` and review its YAML scope before a
 
 Profiles define defaults: `standard` keeps the V1 native workflow; `passive` selects 1–2 without target HTTP/DNS; `offline` selects 6–7 plus native artifact analysis; `full` selects all tools, their native alternatives and all enrichments. CLI `--tools` or `--modules` overrides a YAML profile/tool selection; CLI `--profile` overrides YAML profile defaults. CLI `--enrich` overrides YAML enrichment selection. An explicit YAML `enrichments` list overrides its YAML profile's enrichment default. `--tools` and `--modules` together are rejected, as are CLI `--profile` with `--tools`, `--modules` or `--mode`; use explicit selections instead. YAML profiles cannot also define `modules`, `mode` or `selected_tools`. Tool paths and budget overrides remain independent. V1 YAML is still accepted.
 
-Optional enrichments are `asn,wayback,tech,dedup,priority`; `--enrich all` and `--enrich none` are supported. Only an explicit enrichment/profile setting permits third-party metadata access. Demo, offline and loopback lab modes contact no providers. Tech/grouping/priority use captured evidence only. ASN uses RIPE Stat for observed authorized public A/AAAA addresses; it never authorizes an ASN/CIDR scan. Wayback collects bounded CDX metadata for the seed host, never archived content; history is not current liveness. Owned provider GETs have separate pinned HTTPS endpoints, DNS checks, request/rate/time/output caps and persistent expiring caches. External Subfinder/URLFinder provider request counts remain unknown and are reported separately. Live provider collection has not been execution-verified in this cloud; local fixtures cover pagination, failures, schema validation, caching and destination controls.
+Accepted enrichment selectors are `asn,wayback,tech,dedup,priority` (V3 grouping/ranking always run locally); `--enrich all` and `--enrich none` are supported. Only an explicit enrichment/profile setting permits third-party metadata access. Demo, offline and loopback lab modes contact no providers. Tech/grouping/priority use captured evidence only. ASN uses RIPE Stat for observed authorized public A/AAAA addresses; it never authorizes an ASN/CIDR scan. Wayback collects bounded CDX metadata for the seed host, never archived content; history is not current liveness. Owned provider GETs have separate pinned HTTPS endpoints, DNS checks, request/rate/time/output caps and persistent expiring caches. External Subfinder/URLFinder provider request counts remain unknown and are reported separately. Live provider collection has not been execution-verified in this cloud; local fixtures cover pagination, failures, schema validation, caching and destination controls.
 
-Grouping preserves exact URLs and every source. Numeric/UUID route families and repeated parameter-name signatures are analytical groups: case, explicit ports, methods and exact query values remain distinct and are still independently schedulable. Priority is a versioned configurable 0–100 **review score**, with evidence confidence and component reasons. Guessed routes are capped at 35; scores never confirm a vulnerability. Report sections and CSV/JSONL exports include tools, infrastructure, historical URLs, technologies, route groups and prioritized endpoints.
+Grouping preserves exact URLs and every source. Numeric/UUID route families and repeated parameter-name signatures are analytical groups: case, explicit ports, methods and exact query values remain distinct and are still independently schedulable. Priority is a versioned configurable 0–100 **review score** in five-point steps, with evidence confidence and component reasons. Inferred routes are capped at 30 and other unobserved routes at 20; scores never confirm a vulnerability. Report sections and CSV/JSONL exports include tools, infrastructure, historical URLs, technologies, route groups and prioritized endpoints.
 
-## V2 reruns and database compatibility
+## Reruns and database compatibility
 
 ```text
 reconmap rerun --from ./recon-output/authorized.example --tools 6,7 --enrich tech,dedup,priority
@@ -45,7 +118,7 @@ reconmap report --run ./recon-output/1_authorized.example
 
 Rerun always creates a separate folder using the same collision-safe convention. Local-only selection automatically uses offline mode, verifies every copied artifact hash/size, and makes independent file copies. The stopped/unlocked parent and its analyst decisions remain unchanged. New findings start as candidates; parent decisions remain available in lineage metadata. Fresh active recollection revalidates current scope, uses new counters/queues/locks, and does not treat parent discoveries as authorization. A synthetic/demo parent requires a current YAML config before any real network recollection; its generated fixture scope grants no real authority. Provider traffic is not inherited implicitly by rerun; select it explicitly again. Existing `local_inputs` paths are not reread unless a current YAML is supplied. New/parent run IDs, selected tools, versions/hashes, config digest, copied/new artifact hashes, request counts, stage completion and finding comparison are recorded. Interrupted copying has its own checkpoint: resume verifies the same parent/config/artifact set and completes atomic copies, with copying time retained in the run budget. Offline reused HTTP observations retain their parent collection timestamp and do not establish new liveness.
 
-SQLite migration **1→2** only adds V2 tables; original evidence, findings and analyst decisions are retained. V1 manifests/configurations remain readable and may be reused by rerun. Report regeneration or a compatible resumed write adds the new schema transactionally; immutable parent/diff reads never migrate the baseline. Unknown schemas fail closed. Resume continues existing completed work and remaining budgets; rerun creates new work. Reports do not require rerun. See [examples/scope.yaml](examples/scope.yaml), [v2-full.yaml](examples/v2-full.yaml) and [v2-offline.yaml](examples/v2-offline.yaml).
+SQLite migrations **1→2→3** only add tables; original evidence, findings and analyst decisions are retained. V1 manifests/configurations remain readable and may be reused by rerun. Report regeneration or a compatible resumed write adds the new schema transactionally; immutable parent/diff reads never migrate the baseline. Unknown schemas fail closed. Resume continues existing completed work and remaining budgets; rerun creates new work. Reports do not require rerun. See [examples/scope.yaml](examples/scope.yaml), [v2-full.yaml](examples/v2-full.yaml) and [v2-offline.yaml](examples/v2-offline.yaml).
 
 ## Installation: Linux x86-64
 

@@ -274,6 +274,16 @@ def test_timeout_kills_descendant_after_parent_exits(tmp_path):
     asyncio.run(go())
     pid = int(pidfile.read_text())
     stat = Path(f'/proc/{pid}/stat')
+    # Pipe EOF can arrive during kernel exit, just before /proc changes to Z.
+    # Verify bounded termination rather than racing that final state transition.
+    deadline = time.monotonic() + 2
+    while stat.exists() and time.monotonic() < deadline:
+        try:
+            if stat.read_text().split()[2] == 'Z':
+                break
+        except FileNotFoundError:
+            break
+        time.sleep(0.01)
     if stat.exists():
         assert stat.read_text().split()[2] == 'Z'
     else:

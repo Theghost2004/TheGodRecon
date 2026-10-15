@@ -48,7 +48,7 @@ class ProviderClient:
     async def __aenter__(self):
         connector = aiohttp.TCPConnector(resolver=ProviderResolver(), use_dns_cache=False, force_close=True, limit=1)
         self.session = aiohttp.ClientSession(connector=connector, auto_decompress=False, trust_env=False, cookie_jar=aiohttp.DummyCookieJar(),
-                                           headers={"User-Agent": "reconmap/2 metadata-only", "Accept-Encoding": "identity"})
+                                           headers={"User-Agent": "reconmap/3 metadata-only", "Accept-Encoding": "identity"})
         return self
 
     async def __aexit__(self, *unused):
