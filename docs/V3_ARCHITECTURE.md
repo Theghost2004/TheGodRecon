@@ -156,5 +156,5 @@ The original exports are preserved. Core normalization/ranking always runs;
 `--enrich none` disables optional enrichments, not the local report processing.
 
 See [V3_PROGRESS.md](V3_PROGRESS.md) for exact test, installation, real-tool and
-browser evidence. Native Windows/Python 3.13 and live providers require separate
-execution verification. Configuration of a CI job is not evidence that it ran.
+browser evidence. Linux Python 3.12/3.13 are verified; native Windows and live
+providers require separate execution verification. Configuration of a CI job is not evidence that it ran.

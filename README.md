@@ -134,6 +134,8 @@ python3.12 -m venv .venv
 .venv/bin/reconmap demo --output-root ./recon-output
 ```
 
+If a Debian/Ubuntu interpreter reports that `ensurepip` is unavailable, install its matching `python3.x-venv` package through your distribution, or create the environment with `uv venv --seed --python python3.12 .venv` when uv is installed and `.venv` does not yet exist. In this cloud use `UV_CACHE_DIR=/workspace/.cache/uv` and `PIP_CACHE_DIR=/workspace/.cache/pip` for writable caches.
+
 Alternatively, with uv installed: `uv sync --frozen --extra test`, then `uv run --frozen reconmap demo`. `uv.lock` pins cross-platform dependencies; `requirements.lock` is the hash-pinned pip equivalent including the test dependencies. Installation never changes the locks. Updating them is an explicit maintenance action.
 
 ## Installation: native Windows x86-64 / PowerShell
@@ -150,7 +152,7 @@ py -3.12 -m venv .venv
 
 These commands do not require running an activation script or changing PowerShell execution policy. Use the executable path above instead of `reconmap` in the examples below. Keep the checkout/output root short (for example `C:\dev\reconmap`) on systems without long paths enabled. New Windows run folders receive a current-user-only ACL using the built-in `whoami` and `icacls`; if that fails, collection refuses to write sensitive artifacts. Raw artifacts are not suitable for public web hosting. Linux directories use mode 0700 and content files 0600.
 
-Linux/Python 3.12 has actually been tested in this cloud. Native Windows and Python 3.13 are **not yet execution-verified**; a Linux/Windows CI matrix covers both versions, installation, core/localhost tests, process cleanup and offline Gitleaks. macOS and ARM64 are unverified additional platforms, not claimed support. Optional external binary compatibility is separate from Python compatibility; see [TOOLS.md](docs/TOOLS.md) and [compatibility.json](compatibility.json).
+Linux/Python **3.12.14 and 3.13.5** have actually been tested in this cloud (228 tests each, including real offline tools). Native Windows is **not yet execution-verified**; a Linux/Windows CI matrix covers both versions, installation, core/localhost tests, process cleanup and offline Gitleaks. macOS and ARM64 are unverified additional platforms, not claimed support. Optional external binary compatibility is separate from Python compatibility; see [TOOLS.md](docs/TOOLS.md) and [compatibility.json](compatibility.json).
 
 ## Configure and run
 

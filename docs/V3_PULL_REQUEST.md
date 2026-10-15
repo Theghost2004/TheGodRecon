@@ -36,7 +36,9 @@ vulnerability. Historical and inferred URLs never establish current reachability
 
 - Linux x86-64 / Python 3.12.14: **228 passed, no skips**, in both the development
   environment and a fresh hash-pinned installation (11.98 seconds each).
-- Both suites executed real reviewed Gitleaks 8.30.1 and jsluice binaries.
+- A separate hash-pinned Linux Python **3.13.5** environment also passed **228
+  tests, no skips** (11.74 seconds), plus demo, localhost, resume and offline rerun.
+- All three suites executed real reviewed Gitleaks 8.30.1 and jsluice binaries.
 - Offline full-selection demo and scoped localhost collection: **13 GETs**, no
   forbidden POSTs, excluded endpoints or out-of-scope redirects. Resume and offline
   rerun sent zero new requests; rerun preserved parent bytes and directory entries.
@@ -59,7 +61,7 @@ secondary-request and aggregate-budget requirements. Existing controlled native
 engines run instead; full selection truthfully reports partial coverage (exit 2).
 No active binary target execution or live provider collection is claimed.
 
-Native Windows, Python 3.13, Windows console/process lifecycle and graphical
+Native Windows 3.12/3.13, Windows console/process lifecycle and graphical
 filesystem report navigation remain unverified. Existing CI covers Linux/Windows
 3.12/3.13 but its results have not been inspected here. Subfinder has no equivalent
 native enumeration; URLFinder uses CDX fallback only when explicitly enabled.

@@ -1,12 +1,12 @@
 {
   "checked_date": "2026-10-15",
   "python_execution_verified": [
-    "3.12.14/linux-x86_64"
+    "3.12.14/linux-x86_64",
+    "3.13.5/linux-x86_64"
   ],
   "python_ci_pending": [
     "3.12/windows-x86_64",
-    "3.13/windows-x86_64",
-    "3.13/linux-x86_64"
+    "3.13/windows-x86_64"
   ],
   "tools": {
     "subfinder": {
@@ -183,13 +183,14 @@
   },
   "active_isolation_assessment": "No verified cross-platform egress isolation backend; Linux user/network namespace check failed with read-only uid_map. HTTPS CONNECT cannot enforce path exclusions.",
   "v3_verification": {
-    "platform": "Linux/Python 3.12.14",
+    "platform": "Linux/Python 3.12.14 and 3.13.5",
     "public_target_scans": false,
     "live_provider_calls": false,
     "windows_executed": false,
-    "python_313_executed": false,
+    "python_313_executed": true,
     "active_binaries_executed": false,
-    "tests": "228 passed, no skips, in both development and fresh hash-pinned installations; Linux/Python 3.12.14",
-    "browser": "Headless Chromium 154.0.8037.57 DOM/script checks passed via local HTML setContent; direct file navigation blocked by managed browser; zero external requests"
+    "tests": "228 passed, no skips, in both Python 3.12 installations and a separate hash-pinned Python 3.13.5 installation; Linux x86-64",
+    "browser": "Headless Chromium 154.0.8037.57 DOM/script checks passed via local HTML setContent; direct file navigation blocked by managed browser; zero external requests",
+    "python_313_workflows": "Offline demo, scoped loopback with real jsluice/Gitleaks (13 GETs), zero-request resume and immutable offline rerun passed"
   }
 }

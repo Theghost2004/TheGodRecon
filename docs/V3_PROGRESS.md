@@ -98,8 +98,8 @@ external binaries; full-selection demos report unavailable/blocked capabilities.
 
 ## Deliberate limits and pending verification
 
-- [ ] Native Windows Python 3.12/3.13, Linux Python 3.13 and Windows console/process
-  lifecycle execution. The existing CI matrix is configured, not verified here.
+- [ ] Native Windows Python 3.12/3.13 and Windows console/process lifecycle
+  execution. The existing CI matrix is configured, not verified here.
 - [ ] Native graphical/browser filesystem navigation and live provider collection
   against separately authorized scope. No public target/provider calls were made.
 - [ ] Direct active subprocess containment: no verified backend jointly enforces
@@ -135,3 +135,49 @@ Create PR: https://github.com/Theghost2004/TheGodRecon/pull/new/feature/thegodre
 
 The final documentation commit records this outcome; generated scan artifacts and
 installed binaries remain local and excluded from the branch.
+
+
+## Continued verification — 2026-10-15
+
+- [x] Linux **Python 3.13.5** is now execution-verified. Isolated installation:
+  `/workspace/reconmap-v3-py313`, separate from the primary Python 3.12 environment.
+  The distro interpreter lacked `ensurepip`; the supported alternative succeeded:
+
+  ```bash
+  UV_CACHE_DIR=/workspace/.cache/uv uv venv --seed --python /usr/bin/python3.13 /workspace/reconmap-v3-py313
+  PIP_CACHE_DIR=/workspace/.cache/pip /workspace/reconmap-v3-py313/bin/python -m pip install --require-hashes -r requirements.lock
+  PIP_CACHE_DIR=/workspace/.cache/pip /workspace/reconmap-v3-py313/bin/python -m pip install --no-deps -e .
+  /workspace/reconmap-v3-py313/bin/python -m pip check
+  RECONMAP_TEST_GITLEAKS=/workspace/tooling/bin/gitleaks RECONMAP_TEST_JSLUICE=/workspace/tooling/bin/jsluice /workspace/reconmap-v3-py313/bin/python -m pytest -q --tb=short
+  ```
+
+  During this session `uv venv` included `--allow-existing` solely for the empty
+  directory created by the failed distro-venv attempt. Do not blindly recreate
+  an existing environment. Hash checks stayed enabled; package pins did not change.
+- [x] **228 passed, no skips, 11.74 seconds** with real reviewed Gitleaks/jsluice.
+  Dependency consistency passed; no application/test change was required.
+- [x] Python 3.13 CLI demo/resume/report succeeded. A fresh controlled loopback
+  full-selection run made **13 GETs**; resume and offline rerun made **zero new
+  requests**. Parent file hashes and entries stayed unchanged during rerun.
+  No excluded path, inferred POST or out-of-scope redirect was requested. The
+  server was stopped. External active tools remain blocked as documented.
+- [x] New outputs: `/workspace/TheGodRecon/recon-output/v3-validation/python313/`.
+  `example.com/reports/index.html` is the demo, `127.0.0.1/reports/index.html` the
+  actual localhost run, and `1_127.0.0.1/reports/index.html` its offline rerun.
+  `v3-local-verification.json` preserves counters, paths and immutability checks.
+- [x] Refreshed the cloud environment draft's `start_skill` for V3, writable caches
+  and Python 3.13 evidence. Existing working `install_script` is unchanged. Saved
+  custom network addition **api.github.com**, preserving package-manager presets,
+  repository membership and credential settings. No new secret was requested.
+- [ ] Review/save the draft in environment settings and publish the environment.
+  Tool result confirmed `status: saved`, `requires_publish: true`; runtime update,
+  publication and restoration in a new task have not been verified.
+- [ ] GitHub GraphQL PR reads and REST Actions reads both still return **Forbidden**.
+  The existing allowlist omitted `api.github.com`; saving the addition does not
+  establish live access or sufficient API authentication. Retry after the settings
+  change applies. Git transport remains functional; the prepared PR body is
+  updated, but no PR or inspected CI result is claimed.
+
+Windows execution, graphical filesystem report navigation, active subprocess
+containment and live providers remain pending. This continuation narrows the
+Python-version limitation without claiming another operating system was tested.

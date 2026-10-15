@@ -186,3 +186,20 @@ Main remains the V2 merge `ddaae1c`. Draft PR creation returned GitHub GraphQL
 `Forbidden`; no PR was created and CI execution has not been inspected. The
 prepared body is `docs/V3_PULL_REQUEST.md`. Review/create at
 https://github.com/Theghost2004/TheGodRecon/pull/new/feature/thegodrecon-v3 .
+
+
+### V3 continuation — Linux Python 3.13 verified
+
+- [x] Independent hash-pinned Python **3.13.5** installation and **228 passed**,
+  no skips, 11.74 seconds, including actual Gitleaks/jsluice.
+- [x] Demo and scoped localhost/resume/immutable-rerun passed; 13 collection GETs,
+  zero new resume/rerun requests. Outputs: `recon-output/v3-validation/python313/`.
+- [x] Refreshed README, compatibility evidence, architecture and PR description.
+- [x] Saved cloud startup instructions and the exact `api.github.com` allowlist
+  addition. Existing install script, repository membership and secrets unchanged.
+- [ ] Environment settings review/save and publication remain necessary to apply
+  the draft; runtime API access and fresh-task restoration are unverified.
+- [ ] Native Windows and GitHub Actions results remain unverified. GitHub GraphQL
+  and REST reads still returned Forbidden; no PR was created in this session.
+
+Full evidence and reproducible commands: [V3 progress](docs/V3_PROGRESS.md).
