@@ -156,7 +156,7 @@
       "native_fallback": [
         "analysis"
       ],
-      "unversioned_policy": "Only reviewed executable fingerprints run; other builds use native Tree-sitter until reviewed"
+      "unversioned_policy": "Reviewed static fingerprint or pinned source-build attestation bound to source revision, binary hash and path; unknown builds are refused before executing help"
     }
   },
   "upstream_templates_release_page": "10.5.0; bulk templates not inspected or executed",
@@ -165,7 +165,7 @@
     "environment.yaml": "0d3d9f7a545db5c525a541d89cead8da8dd8f20f61b6b0c35f0a1beece3adc84",
     "git-head.yaml": "e0232f98b1ab2eb3182a022f1869dc1beb2e5cb76b1376c2df6fcc0d649b3696"
   },
-  "application_version": "0.3.0",
+  "application_version": "3.1.0",
   "schema_version": 3,
   "provider_integrations": {
     "wayback-cdx": {
@@ -193,5 +193,22 @@
     "browser": "15 Chromium 154.0.8037.57 / Playwright 1.62.1 checks passed via local HTML setContent: visible filters, navigation, empty report and narrow layout; zero browser/console errors or external requests. Direct file navigation remains blocked by managed browser.",
     "python_313_workflows": "Offline demo, scoped loopback with real jsluice/Gitleaks (13 GETs), zero-request resume and immutable offline rerun passed",
     "regression_evidence": "docs/V3_REGRESSION.md; real-tool and missing-tool workflows passed 13 checks each"
+  },
+  "v31_verification": {
+    "date": "2026-10-16",
+    "linux_python312": "318 passed, 0 skipped/failures, 15.15s",
+    "linux_python313": "318 passed, 0 skipped/failures, 15.38s",
+    "fresh_bootstrap": "Successful pip hash-locked install, seven official binaries and pinned jsluice build; space/Unicode paths",
+    "repeat_bootstrap": "All eight binaries reused, zero tool downloads",
+    "jsluice_built_sha256": "452e090a0040dc0b6bd36e89e008510acd449bc021a9989ea48339a7146d967c",
+    "jsluice_source_sha256": "9a5db8164f2cbbf99ead65f83926e3a169df9b1570e00dfee097f896c70db078",
+    "build_toolchain": "Go 1.27.2, GCC 14.2.0; Linux x86-64",
+    "browser": "15 Chromium checks, zero errors/external requests; local HTML setContent",
+    "terminal": "Real Linux PTY: 31 frames, restored cursor, report prompt; screenshot rendered from captured final frame",
+    "localhost": "13 verification checks, 13 GETs, zero new resume/rerun requests; parent immutable",
+    "windows_executed": false,
+    "public_target_scans": false,
+    "live_provider_calls": false,
+    "active_binaries_executed": false
   }
 }

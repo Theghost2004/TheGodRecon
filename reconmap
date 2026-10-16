@@ -1,0 +1,8 @@
+#!/bin/sh
+# Project-local launcher; no shell profile or global PATH edits.
+project_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd) || exit 3
+if [ ! -x "$project_dir/.venv/bin/python" ]; then
+  echo 'Run python tools/bootstrap.py first.' >&2
+  exit 3
+fi
+exec "$project_dir/.venv/bin/python" -m reconmap "$@"

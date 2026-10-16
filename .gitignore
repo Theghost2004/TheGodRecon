@@ -8,3 +8,5 @@ recon-output/
 .env
 scope.local.yaml
 .tools/
+
+.cache/

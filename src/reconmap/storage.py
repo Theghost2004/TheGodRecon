@@ -161,6 +161,7 @@ CREATE TABLE IF NOT EXISTS jobs(url TEXT PRIMARY KEY, depth INTEGER, source TEXT
 class Store:
     def __init__(self, run: Path, readonly: bool = False):
         self.run = run
+        self.on_change = None
         for name in ("recon.sqlite", "recon.sqlite-wal", "recon.sqlite-shm", "recon.sqlite-journal"):
             path = run / name
             if path.is_symlink() or path.is_junction() or (path.exists() and (not path.is_file() or path.stat().st_nlink > 1)):
@@ -193,6 +194,8 @@ class Store:
     def execute(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
         cursor = self.conn.execute(sql, args)
         self.conn.commit()
+        if self.on_change is not None:
+            self.on_change()
         return cursor
 
     def rows(self, table: str) -> list[dict]:
@@ -246,6 +249,8 @@ class Store:
             self.relate("artifact:"+evidence["hash"],"finding:"+fingerprint,"candidate_evidence",source)
 
     def close(self) -> None:
+        if self.on_change is not None:
+            self.on_change(True)
         self.conn.close()
 
 

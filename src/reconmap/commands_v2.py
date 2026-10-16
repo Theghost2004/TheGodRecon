@@ -12,9 +12,10 @@ from .security import redact_data
 
 
 def add_scan_arguments(parser, *, rerun=False):
+    parser.add_argument("target_pos", nargs="?", metavar="TARGET")
     parser.add_argument("--target")
     parser.add_argument("--config", type=Path)
-    parser.add_argument("--output-root", type=Path, default=None if rerun else Path("recon-output"))
+    parser.add_argument("--output-root", type=Path, default=None)
     if not rerun:
         parser.add_argument("--resume", type=Path)
     parser.add_argument("--baseline", type=Path)
@@ -22,6 +23,12 @@ def add_scan_arguments(parser, *, rerun=False):
     parser.add_argument("--mode", choices=["standard", "passive", "offline", "demo"])
     parser.add_argument("--profile", choices=["standard", "passive", "offline", "full"])
     parser.add_argument("--tools", help="IDs/names/ranges/presets: 1,3-5,offline or all; replaces module selection")
+    parser.add_argument("--all-tool", "--all-tools", action="store_true", help="Select all eight capabilities; safety blocks remain")
+    presets = parser.add_mutually_exclusive_group()
+    presets.add_argument("--preset", choices=["quick", "standard", "deep"])
+    for name in ("quick", "standard", "deep"):
+        presets.add_argument("--" + name, dest="preset", action="store_const", const=name)
+    parser.add_argument("--no-progress", action="store_true", help="Use plain stage logs")
     parser.add_argument("--enrich", help="asn,wayback,tech,dedup,priority; all or none")
     parser.add_argument("--modules", help="Legacy comma-separated module selection")
     parser.add_argument("--tool", action="append", default=[], metavar="NAME=PATH")
@@ -37,6 +44,11 @@ def register(commands, parser_class):
         command = sub.add_parser(name)
         command.add_argument("--tool", action="append", default=[], metavar="NAME=PATH")
         command.add_argument("--json", action="store_true")
+    registration = sub.add_parser("register", help="Remember a path; compatibility checks still apply")
+    registration.add_argument("name", choices=list(BY_NAME))
+    registration.add_argument("path", type=Path)
+    removal = sub.add_parser("unregister", help="Forget an override without deleting its executable")
+    removal.add_argument("name", choices=list(BY_NAME))
     plan = commands.add_parser("plan", help="Preview scope, stages and dependencies without scanning")
     add_scan_arguments(plan)
     plan.add_argument("--json", action="store_true")
@@ -49,6 +61,19 @@ def register(commands, parser_class):
 def handle(args):
     from .cli import effective_config, overrides, run
     if args.command == "tools":
+        if args.tool_command == "unregister":
+            from .settings import load_settings, save_settings
+            settings = load_settings()
+            settings.registered_tools.pop(args.name, None)
+            save_settings(settings)
+            print(f"Forgot {args.name} override; executable preserved. Managed-directory/PATH discovery resumes.")
+            return 0
+        if args.tool_command == "register":
+            from .settings import register_tool
+            register_tool(args.name, args.path)
+            info = identify(args.name, str(args.path.resolve()))
+            print(f"Registered {args.name}: {args.path.resolve()} | {execution_status(info)}; {info.reason}")
+            return 0 if info.compatible else 2
         records = doctor(overrides(args.tool))
         data = [{**records[t.name].record(), "status": execution_status(records[t.name]), "operating_systems": "Linux/Windows native core; external binary verification is platform-specific"} for t in REGISTRY]
         if args.json:

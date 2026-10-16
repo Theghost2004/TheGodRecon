@@ -35,6 +35,20 @@ def parser() -> Parser:
     doc=commands.add_parser("doctor",help="Check Python and optional external binary capabilities")
     doc.add_argument("--tool",action="append",default=[],metavar="NAME=PATH")
     doc.add_argument("--json",action="store_true")
+    doc.add_argument("--fix",action="store_true",help="Repair missing reviewed tools with consent")
+    doc.add_argument("--yes",action="store_true")
+    setup=commands.add_parser("setup",help="Explicitly install/reuse verified optional tools")
+    setup.add_argument("--yes",action="store_true",help="Consent to reviewed dependency downloads/builds")
+    setup.add_argument("--directory",type=Path)
+    setup.add_argument("--skip-tools",action="store_true")
+    setup.add_argument("--go")
+    setup.add_argument("--cc")
+    prefs=commands.add_parser("settings",help="Show or set non-sensitive user preferences")
+    prefs.add_argument("--set",nargs=2,metavar=("KEY","VALUE"))
+    resume=commands.add_parser("resume",help="Resume an existing scan with unchanged scope and budgets")
+    resume.add_argument("run",type=Path)
+    resume.add_argument("--no-progress",action="store_true")
+    resume.add_argument("--break-lock",action="store_true")
     init=commands.add_parser("init",help="Write an editable exact-host scope YAML; refuses overwrite")
     init.add_argument("--target",required=True)
     init.add_argument("--config",type=Path,required=True)
@@ -43,13 +57,15 @@ def parser() -> Parser:
     add_scan_arguments(scan)
     register(commands, Parser)
     report=commands.add_parser("report",help="Regenerate local redacted exports and HTML")
-    report.add_argument("--run",type=Path,required=True)
+    report.add_argument("--run",type=Path)
+    report.add_argument("--open",action="store_true",help="Open explicitly regenerated report")
     report.add_argument("--break-lock",action="store_true")
     diff=commands.add_parser("diff",help="Compare snapshots; older run remains untouched")
     diff.add_argument("--baseline",type=Path,required=True)
     diff.add_argument("--current",type=Path,required=True)
     demo=commands.add_parser("demo",help="Deterministic offline fixtures; no provider/target network")
-    demo.add_argument("--output-root",type=Path,default=Path("recon-output"))
+    demo.add_argument("--output-root",type=Path)
+    demo.add_argument("--no-progress",action="store_true")
     demo.add_argument("--with-gitleaks",action="store_true",help="Run optional installed Gitleaks offline")
     demo.add_argument("--tool",action="append",default=[],metavar="NAME=PATH")
     demo.add_argument("--tools", help="Optional numbered selection; active binaries remain blocked")
@@ -73,13 +89,32 @@ def overrides(values: list[str]) -> dict[str,str]:
 
 
 def effective_config(args: argparse.Namespace) -> ScanConfig:
+    from .settings import load_settings
+    from .presets import apply_preset
+    settings = load_settings()
+    positional = getattr(args, "target_pos", None)
+    if positional and args.target:
+        raise ConfigError("Use a positional target or --target, not both")
+    args.target = positional or args.target
+    if getattr(args, "all_tool", False):
+        if args.tools is not None or args.modules is not None or args.profile is not None:
+            raise ConfigError("--all-tool cannot be combined with --tools, --modules or --profile")
+        args.tools = "all"
+    preset = getattr(args, "preset", None)
+    if preset and (args.config or getattr(args, "resume", None) or args.profile):
+        raise ConfigError("Presets apply to new default scans; do not combine with --config, --resume or --profile")
+    if args.output_root is None and args.command != "rerun":
+        args.output_root = Path(settings.output_root)
     if args.resume:
         read_manifest(args.resume)
         config=ScanConfig.model_validate_json((args.resume/"config.effective.json").read_text(encoding="utf-8"))
     elif args.config:
         config=load_config(args.config)
     else:
-        raise ConfigError("A new scan requires an explicit YAML --config; create one with reconmap init")
+        if not args.target:
+            raise ConfigError("A new scan requires TARGET or --target; resume with --resume PATH")
+        config=default_config(args.target)
+        config=apply_preset(config, preset or (settings.preset if not args.profile else "standard"))
     if args.config and args.resume:
         config=load_config(args.config)
     choices = {name: getattr(args, name, None) for name in ("tools", "profile", "enrich", "modules", "mode")}
@@ -97,7 +132,7 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
     return ScanConfig.model_validate(data)
 
 
-def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path | None = None, baseline: Path | None = None, break_lock: bool = False, initialize=None) -> int:
+def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path | None = None, baseline: Path | None = None, break_lock: bool = False, initialize=None, no_progress=False, preset=None) -> int:
     if baseline:
         read_manifest(baseline)
     tools={name:identify(name,config.tools.get(name)) for name in config.modules if name in PINS}
@@ -130,29 +165,62 @@ def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path 
         previous=signal.getsignal(signal.SIGTERM)
         signal.signal(signal.SIGTERM,lambda *unused: (_ for _ in ()).throw(KeyboardInterrupt()))
         try:
-            state=asyncio.run(Scanner(path,manifest,config,tools,fixtures() if config.mode=="demo" else None).run_scan())
+            from .progress import Dashboard
+            from .settings import load_settings
+            scanner=Scanner(path,manifest,config,tools,fixtures() if config.mode=="demo" else None)
+            with Dashboard(enabled=not no_progress and load_settings().progress, preset=preset or config.profile) as dashboard:
+                state=asyncio.run(dashboard.run(scanner))
         finally:
             signal.signal(signal.SIGTERM,previous)
-    print(f"{state}: {path/'reports'/'index.html'}")
+    from .report_access import finish_run
+    finish_run(path, state)
     return {"completed":0,"partial":2,"interrupted":130}[state]
 
 
 def main(argv: list[str] | None = None) -> int:
     try:
-        args=parser().parse_args(argv)
+        values = list(sys.argv[1:] if argv is None else argv)
+        if not values:
+            if sys.stdin.isatty() and sys.stdout.isatty():
+                from .menu import menu
+                return menu()
+            parser().print_help()
+            return 0
+        args=parser().parse_args(values)
+        if args.command == "resume":
+            return main(["scan", "--resume", str(args.run)] + (["--no-progress"] if args.no_progress else []) + (["--break-lock"] if args.break_lock else []))
+        if args.command == "setup":
+            from .setup import setup
+            return setup(yes=args.yes, directory=args.directory, skip_tools=args.skip_tools, go=args.go, cc=args.cc)
+        if args.command == "settings":
+            from .settings import load_settings, save_settings
+            settings = load_settings()
+            if args.set:
+                key, value = args.set
+                if key not in {"preset", "output_root", "auto_open", "progress"}:
+                    raise ConfigError("Editable preferences: preset, output_root, auto_open, progress; register tools with tools register")
+                if key in {"auto_open", "progress"}:
+                    if value.lower() not in {"true", "false"}:
+                        raise ConfigError("Boolean preferences accept true or false")
+                    value = value.lower() == "true"
+                if key == "output_root":
+                    value = str(Path(value).expanduser().resolve())
+                setattr(settings, key, value)
+                save_settings(settings)
+            print(settings.model_dump_json(indent=2))
+            return 0
         if args.command in {"tools", "plan", "rerun"}:
             from .commands_v2 import handle
             return handle(args)
         if args.command=="doctor":
-            tools=doctor(overrides(args.tool))
-            if args.json:
-                print(json.dumps({"python":sys.version.split()[0],"platform":sys.platform,"core":"available","tools":{name:info.record() for name,info in tools.items()}},indent=2))
-            else:
-                print(f"Native core: Python {sys.version.split()[0]} on {sys.platform}; HTTP, HTML crawl, JavaScript AST, SQLite and offline reports available")
-                print("TOOL         VERSION      AVAILABLE  SUPPORTED  CAPABILITY / ACTION")
-                for name,info in tools.items():
-                    print(f"{name:12} {info.version[:12]:12} {str(info.available):10} {str(info.supported):10} {info.capability}; {info.reason}")
-            return 0
+            from .setup import health, print_health, setup
+            if args.fix:
+                if args.json or args.tool:
+                    raise ConfigError("Use doctor --fix separately from --json or temporary --tool overrides")
+                return setup(yes=args.yes)
+            data=health(overrides(args.tool))
+            print(json.dumps(data,indent=2)) if args.json else print_health(data)
+            return 0 if data["core"] == "available" else 4
         if args.command=="init":
             config=default_config(args.target)
             config.scope.lab=args.lab
@@ -165,7 +233,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Editable exact-host scope saved: {args.config.absolute()}")
             return 0
         if args.command=="scan":
-            return run(effective_config(args),args.target,args.output_root,args.resume,args.baseline,args.break_lock)
+            config=effective_config(args)
+            from .settings import load_settings
+            return run(config,args.target,args.output_root,args.resume,args.baseline,args.break_lock,
+                       no_progress=args.no_progress,preset=args.preset or ("YAML" if args.config else "saved run" if args.resume else load_settings().preset))
         if args.command=="demo":
             config=default_config("example.com")
             config.mode="demo"
@@ -177,12 +248,19 @@ def main(argv: list[str] | None = None) -> int:
                 config.modules.append("gitleaks")
             if args.tools is not None or args.enrich is not None:
                 config = resolve_selection(config, tools=args.tools, enrich=args.enrich, mode="demo")
-            return run(config,"example.com",args.output_root)
+            from .settings import load_settings
+            return run(config,"example.com",args.output_root or Path(load_settings().output_root),no_progress=args.no_progress,preset="demo")
         if args.command=="report":
+            from .report_access import latest_report, open_report
+            if args.run is None:
+                open_report(latest_report())
+                return 0
             read_manifest(args.run)
             with RunLock(args.run,args.break_lock):
                 generate_report(args.run)
             print(args.run.absolute()/"reports"/"index.html")
+            if args.open:
+                open_report(args.run/"reports/index.html")
             return 0
         if args.command=="diff":
             if args.baseline.resolve()==args.current.resolve():

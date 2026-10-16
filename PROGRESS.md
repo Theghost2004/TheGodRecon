@@ -220,3 +220,10 @@ Full evidence and reproducible commands: [V3 progress](docs/V3_PROGRESS.md).
 Output root: `/workspace/TheGodRecon/recon-output/v3-regression/`. Raw evidence,
 reports, environments and binaries remain excluded from Git. Only reviewed
 localhost fixture screenshots are included with the source/docs/tests.
+
+
+## 3.1.0 usability release — 2026-10-16
+
+Implemented positional scans/all-tool aliases, bounded presets, persistent preferences/tool discovery, shared verified installer/bootstrap, pinned jsluice source builds, real-state terminal progress, optional guided menu, and latest-report access. Existing V3 scope/budget/normalization/ranking/SQLite controls remain. Version 3.1.0, no schema/scoring migration or new runtime dependency.
+
+318 tests passed on each of Linux Python 3.12.14 and 3.13.5. Fresh/repeated bootstrap, all reviewed Linux tool checks, real offline tools, 13 localhost workflow checks, 15 browser checks and actual PTY redraw/restoration passed. Windows remains unexecuted. Details/checklist: docs/V3_1_PROGRESS.md and docs/V3_1_RELEASE.md. Evidence: recon-output/v31-validation/. Branch: feature/thegodrecon-v3.1.
