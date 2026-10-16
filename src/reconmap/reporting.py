@@ -58,20 +58,39 @@ REPORT_SCRIPT = r'''
 const records = JSON.parse(document.getElementById('data').textContent);
 const input = document.getElementById('search'), select = document.getElementById('filter');
 const statusFilter=document.getElementById('status'), confidenceFilter=document.getElementById('confidence'), sourceFilter=document.getElementById('source'), priorityFilter=document.getElementById('priority');
-for(const [element,key] of [[statusFilter,'status'],[confidenceFilter,'confidence'],[sourceFilter,'source']]) {
+const sourceNames=record=>(Array.isArray(record.sources)?record.sources:[record.source]).filter(value=>typeof value==='string' && value);
+for(const [element,key] of [[statusFilter,'status'],[confidenceFilter,'confidence']]) {
  for(const value of [...new Set(records.map(r=>r[key]).filter(v=>v!==undefined && v!==null))].sort()) {
   const option=document.createElement('option');option.value=String(value);option.textContent=String(value);element.appendChild(option);
  }
 }
+for(const value of [...new Set(records.flatMap(sourceNames))].sort()) {
+ const option=document.createElement('option');option.value=value;option.textContent=value;sourceFilter.appendChild(option);
+}
+const openedByFilter=new Set();
 function draw() {
- const q=input.value.toLowerCase(), kind=select.value;
+ for(const group of openedByFilter) group.open=false;
+ openedByFilter.clear();
+ const q=input.value.trim().toLowerCase(), kind=select.value;
+ const active=Boolean(q || kind || statusFilter.value || confidenceFilter.value || sourceFilter.value || priorityFilter.value);
+ let matches=0;
  for(const row of document.querySelectorAll('[data-record]')) {
   const record=records[Number(row.dataset.record)];
-  row.hidden=!(JSON.stringify(record).toLowerCase().includes(q) && (!kind || record.section===kind) && (!statusFilter.value || String(record.status)===statusFilter.value) && (!confidenceFilter.value || record.confidence===confidenceFilter.value) && (!sourceFilter.value || record.source===sourceFilter.value) && (!priorityFilter.value || (record.priority!==undefined && record.priority>=Number(priorityFilter.value))));
+  row.hidden=!(JSON.stringify(record).toLowerCase().includes(q) && (!kind || record.section===kind) && (!statusFilter.value || String(record.status)===statusFilter.value) && (!confidenceFilter.value || record.confidence===confidenceFilter.value) && (!sourceFilter.value || sourceNames(record).includes(sourceFilter.value)) && (!priorityFilter.value || (record.priority!==undefined && record.priority>=Number(priorityFilter.value))));
+  if(!row.hidden) {
+   matches++;
+   if(active) for(let parent=row.parentElement;parent;parent=parent.parentElement) {
+    if(parent.tagName==='DETAILS' && !parent.open) {parent.open=true;openedByFilter.add(parent);}
+   }
+  }
  }
+ for(const view of document.querySelectorAll('[data-view], [data-collection-details]')) view.hidden=active && !view.querySelector('[data-record]:not([hidden])');
+ document.getElementById('filter-summary').textContent=active?`${matches} matching record${matches===1?'':'s'}`:'Showing all records. Expand a view to inspect its evidence.';
 }
 input.addEventListener('input',draw); select.addEventListener('change',draw);
 for(const element of [statusFilter,confidenceFilter,sourceFilter,priorityFilter]) element.addEventListener('input',draw);
+for(const link of document.querySelectorAll('nav a')) link.addEventListener('click',()=>{select.value=link.textContent;draw();});
+draw();
 '''
 
 
@@ -183,9 +202,9 @@ def generate_report(run: Path, store: Store | None = None) -> None:
             anchor = label.lower().replace(" ", "-")
             if label in {"All Results", "Live Assets"}:
                 description = "Open preserved inventory, including low-value observations" if label == "All Results" else "Inspect current HTTP observations, including restricted responses and redirects"
-                sections.append(f'<section id="{anchor}"><h2>{label} ({len(rows)})</h2><details><summary>{description}</summary>{body_text}</details></section>')
+                sections.append(f'<section data-view="{label}" id="{anchor}"><h2>{label} ({len(rows)})</h2><details><summary>{description}</summary>{body_text}</details></section>')
             else:
-                sections.append(f'<section id="{anchor}"><h2>{label} ({len(rows)})</h2>{body_text}</section>')
+                sections.append(f'<section data-view="{label}" id="{anchor}"><h2>{label} ({len(rows)})</h2>{body_text}</section>')
         views = ("tool_executions","stage_results","stages","historical_urls","infrastructure","technologies","url_groups","url_group_members","parameters","observations","findings","lineage","changes")
         secondary = []
         for section in views:
@@ -195,8 +214,8 @@ def generate_report(run: Path, store: Store | None = None) -> None:
                 records.append({"section": section, **row})
                 title = row.get("title") or row.get("url") or row.get("host") or row.get("name") or row.get("stage") or row.get("subject") or section
                 body.append(f'<details data-record="{index}"><summary>{html.escape(str(title))}</summary><pre>{html.escape(json.dumps(row,indent=2,ensure_ascii=False))}</pre></details>')
-            secondary.append(f'<details><summary>{section.replace("_", " ").title()} ({len(data[section])})</summary>{"".join(body)}</details>')
-        sections.append('<details><summary>Collection details, original detector records and raw exports</summary>' + ''.join(secondary) + '</details>')
+            secondary.append(f'<details data-view="{section}"><summary>{section.replace("_", " ").title()} ({len(data[section])})</summary>{"".join(body)}</details>')
+        sections.append('<details data-collection-details><summary>Collection details, original detector records and raw exports</summary>' + ''.join(secondary) + '</details>')
         relations="".join(f'<details><summary>{html.escape(r["parent"])}</summary><pre>{html.escape(json.dumps(r,indent=2))}</pre></details>' for r in data["relationships"])
         artifacts="".join(f'<li>{html.escape(a["hash"])} — {html.escape(a["path"])} ({a["bytes"]} bytes, restricted raw input)</li>' for a in data["artifacts"])
         # Evidence links point only to safely generated local hash files. No target URLs/resources load.
@@ -207,7 +226,7 @@ def generate_report(run: Path, store: Store | None = None) -> None:
         document=f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-{script_hash}'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
 <title>reconmap {html.escape(manifest['host'])}</title>
-<style>body{{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem;background:#101827;color:#e5ecfa}}input,select{{padding:.6rem;margin:.3rem}}details{{border:1px solid #43516b;margin:.4rem 0;padding:.5rem}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}a{{color:#9fccff}}[hidden]{{display:none}}small{{color:#bbcae0}}</style>
+<style>body{{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem;background:#101827;color:#e5ecfa;overflow-wrap:anywhere}}input,select{{padding:.6rem;margin:.3rem;max-width:100%;box-sizing:border-box}}label{{display:inline-block;max-width:100%}}details{{border:1px solid #43516b;margin:.4rem 0;padding:.5rem}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}a{{color:#9fccff}}[hidden]{{display:none}}small{{color:#bbcae0}}</style>
 <h1>TheGodRecon V3: {html.escape(manifest['host'])}</h1><p>State: {html.escape(manifest['state'])} · Transport: {html.escape(manifest.get('transport',''))} · Requests reserved: {manifest.get('requests',0)}</p>
 <p>Investigation leads require manual validation. Raw artifacts may contain sensitive content. No target resource is loaded by this report.</p>
 <p>Historical URLs are archive metadata, not current liveness. Rerun observations may be reused from a parent's collection timestamp. Technology confidence does not confirm a software version or vulnerability.</p>
@@ -219,6 +238,7 @@ def generate_report(run: Path, store: Store | None = None) -> None:
 <p><a href="investigation.json" download>Investigation export</a> · <a href="snapshot.json" download>Complete redacted snapshot</a> · <a href="stage-results.json" download>Execution accounting</a></p>
 <label>Search <input id="search" type="search"></label><label>Section <select id="filter"><option value="">All</option>{''.join(f'<option>{s}</option>' for s in (*primary_views, *views))}</select></label>
 <label>Status <select id="status"><option value="">All</option></select></label><label>Confidence <select id="confidence"><option value="">All</option></select></label><label>Source <select id="source"><option value="">All</option></select></label><label>Minimum priority <input id="priority" type="number" min="0" max="100" style="width:5rem"></label>
+<p id="filter-summary" role="status" aria-live="polite"></p>
 {''.join(sections)}<details><summary>Evidence relationships</summary>{relations}</details><details><summary>Restricted source artifacts</summary><ul>{artifacts}</ul></details><details><summary>Comparison</summary><pre>{diff}</pre></details>
 <script id="data" type="application/json">{payload}</script><script>{REPORT_SCRIPT}</script></html>'''
         (reports/"index.html").write_text(document,encoding="utf-8")

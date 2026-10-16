@@ -181,3 +181,42 @@ installed binaries remain local and excluded from the branch.
 Windows execution, graphical filesystem report navigation, active subprocess
 containment and live providers remain pending. This continuation narrows the
 Python-version limitation without claiming another operating system was tested.
+
+
+## Expanded dry-run and debugging pass — 2026-10-16
+
+- [x] Re-ran the 228-test baseline, then expanded adversarial/CLI/browser scenarios.
+- [x] Reproduced and fixed hidden filtered rows, individual-source filtering,
+  structured-context/extension-method evidence loss, stale soft-404 penalties,
+  mixed-case MIME parsing/classification and script/source-map suffix handling.
+- [x] Added 40 Python regression cases. Final **268 passed** with **zero skips**
+  on Python 3.12.14 (11.89 seconds) and 3.13.5 (12.17 seconds), including actual
+  reviewed Gitleaks/jsluice. No reproduced application failure remains in this pass.
+- [x] Three localhost workflow passes completed 13 checks each. The final runs
+  exercised actual external local tools and all eight deliberately missing tool
+  paths. Each collected 13 GETs; resume/rerun sent zero new requests and preserved
+  parent evidence. Servers were stopped and no public target/provider was contacted.
+- [x] Chromium/Playwright completed 15 checks, including actual row visibility,
+  correlated sources, nested evidence, empty reports and narrow layout. Browser and
+  console errors: zero; external requests: zero. Captured and reviewed screenshots.
+- [x] Added reusable `tools/verify_local_workflow.py` and
+  `tools/check_report_browser.cjs`. The latter is optional and adds no Python runtime
+  dependency. Existing output and screenshot directories are never overwritten.
+- [x] Updated README, compatibility, architecture and prepared PR description.
+  Published screenshots contain only the controlled localhost fixture.
+- [ ] Native Windows, direct graphical filesystem navigation, live providers and
+  enforceable direct active subprocess containment remain separately unverified.
+
+Full matrix, exact commands, screenshots and retained output paths:
+[V3_REGRESSION.md](V3_REGRESSION.md). Outputs are under
+`/workspace/TheGodRecon/recon-output/v3-regression/`; the final real-tool report is
+`pass-2-python313/127.0.0.1/reports/index.html`. Final test evidence is
+`pytest-python312-final.xml` and `pytest-python313-final.xml`. Testing covers the documented
+scenarios and cannot establish the absence of all undiscovered bugs.
+
+Review branch for this pass: `feature/thegodrecon-v3`. No main-branch merge or
+release deployment is part of this debugging workflow. Reviewed screenshot files
+are `docs/images/v3-shortlist.png` and `docs/images/v3-exposure.png`. The source
+Gitleaks pass inspected 71 files and found only the two existing synthetic tokens.
+Final repeated suites passed after strengthening the completed-job preservation
+assertion; the earlier successful JUnit files are also retained.

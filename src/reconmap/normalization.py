@@ -5,6 +5,7 @@ current response. Reused parent observations retain their original timestamps.
 """
 import hashlib
 import json
+import re
 from collections import defaultdict
 from urllib.parse import parse_qsl, urljoin, urlsplit
 
@@ -14,6 +15,19 @@ from .scope import ScopePolicy
 
 def request_identity(url, method="UNKNOWN", context="unauthenticated"):
     return hashlib.sha256(json.dumps([request_url(url), method.upper(), context], ensure_ascii=True).encode()).hexdigest()
+
+
+def observation_request(kind, data):
+    """Use the same identity rules when collecting and attaching evidence."""
+    method = data.get("method", "GET" if kind == "http" else "UNKNOWN")
+    # RFC method tokens can contain punctuation (for example M-SEARCH).
+    # Invalid metadata stays attached to UNKNOWN; raw data is never discarded.
+    if not isinstance(method, str) or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,64}", method):
+        method = "UNKNOWN"
+    context = data.get("authorization_context", "unauthenticated")
+    if not isinstance(context, str):
+        context = json.dumps(context, sort_keys=True)
+    return method.upper(), context
 
 
 def decode(value):
@@ -74,27 +88,19 @@ def normalize_evidence(store):
         identities = set()
         for obs, data in evidence:
             if obs["kind"] in {"http", "inferred_endpoint", "form"}:
-                method = data.get("method") or ("GET" if obs["kind"] == "http" else "UNKNOWN")
-                if not isinstance(method, str) or not method.isascii() or not method.isalpha() or len(method) > 20:
-                    method = "UNKNOWN"
-                context = data.get("authorization_context", "unauthenticated")
-                if not isinstance(context, str):
-                    context = json.dumps(context, sort_keys=True)
-                identities.add((method.upper(), context))
+                identities.add(observation_request(obs["kind"], data))
         if any(r["status"] is not None for r in rows) and not any(o["kind"] == "http" for o, _ in evidence):
             identities.add(("GET", "unauthenticated"))
         if not identities:
             identities.add(("UNKNOWN", "unauthenticated"))
         for method, context in sorted(identities):
-            refs, current, prior, errors, inferred, redirects = [], [], [], [], [], []
+            refs, current, prior, errors, inferred, redirects, soft_errors = [], [], [], [], [], [], []
             originals = {r["url"] for r in rows}
             sources = {r["source"] for r in rows}
             discovery_sources = set(sources)
             signals = set()
             for obs, data in evidence:
-                obs_method = (data.get("method") or ("GET" if obs["kind"] == "http" else "UNKNOWN"))
-                obs_context = data.get("authorization_context", "unauthenticated")
-                if obs["kind"] in {"http", "inferred_endpoint", "form"} and (str(obs_method).upper(), str(obs_context)) != (method, context):
+                if obs["kind"] in {"http", "inferred_endpoint", "form"} and observation_request(obs["kind"], data) != (method, context):
                     continue
                 ref = {"table": "observations", "id": obs["id"], "source": obs["source"], "kind": obs["kind"], "time": obs["time"]}
                 if data.get("hash"):
@@ -112,7 +118,7 @@ def normalize_evidence(store):
                 if obs["kind"] == "http" and type(data.get("status")) is int and 100 <= data["status"] <= 599:
                     observed = {"status": data["status"], "hash": data.get("hash"), "bytes": data.get("bytes"),
                         "truncated": bool(data.get("truncated")), "time": obs["time"], "source": obs["source"],
-                        "observation_id": obs["id"], "content_type": data.get("headers", {}).get("content-type", "").split(";")[0],
+                        "observation_id": obs["id"], "content_type": data.get("headers", {}).get("content-type", "").split(";", 1)[0].strip().lower(),
                         "location": data.get("headers", {}).get("location"), "response_features": data.get("response_features", {})}
                     (prior if obs["source"].startswith("parent:") else current).append(observed)
                 if obs["kind"] in {"request_error", "parse_error", "invalid_reference"}:
@@ -120,13 +126,18 @@ def normalize_evidence(store):
                 if obs["kind"] == "inferred_endpoint":
                     inferred.append({"id": obs["id"], **data})
                 if obs["kind"] == "soft-error-similarity":
-                    signals.add("soft-404")
+                    soft_errors.append((obs, data))
                 if obs["kind"] == "historical-discovery":
                     signals.add("historical")
                 if obs["kind"] == "unresolved_expression":
                     signals.add("unresolved")
             latest = max(current, key=lambda r: (r["time"], r["observation_id"]), default=None)
             prior_latest = max(prior, key=lambda r: (r["time"], r["observation_id"]), default=None)
+            for obs, data in soft_errors:
+                # Older records encoded the body hash only in their identity.
+                digest = data.get("hash") or (obs.get("identity") or "").rsplit(":", 1)[-1]
+                if latest and not obs["source"].startswith("parent:") and re.fullmatch(r"[0-9a-f]{64}", str(digest)) and digest == latest["hash"]:
+                    signals.add("soft-404")
             legacy = None
             if not current and not prior and method == "GET" and context == "unauthenticated":
                 summary = next((r for r in rows if r["status"] is not None), None)

@@ -316,9 +316,9 @@ class Scanner:
             return await bounded_response(response, cap)
 
     def process_response(self, url: str, response: Response, depth: int, attempt: int) -> None:
-        content_type = response.headers.get("content-type", "").split(";",1)[0]
+        content_type = response.headers.get("content-type", "").split(";",1)[0].strip().lower()
         text = response.body.decode("utf-8", errors="replace")
-        kind = "map" if urlsplit(url).path.endswith(".map") else "js" if "javascript" in content_type or urlsplit(url).path.endswith(".js") else "content"
+        kind = "map" if urlsplit(url).path.lower().endswith(".map") else "js" if "javascript" in content_type or urlsplit(url).path.lower().endswith((".js", ".mjs")) else "content"
         digest = self.save_artifact(response.body, kind, url)
         if "tech" in self.config.enrichments:
             from .enrichment.technology import fingerprint
@@ -439,7 +439,7 @@ class Scanner:
                     text = artifact_path(self.run, artifact[0]).read_text(encoding="utf-8",errors="replace")[:20000]
                     ratio = difflib.SequenceMatcher(None, baseline["text"], text, autojunk=True).ratio()
                     if ratio >= 0.9:
-                        self.store.observed(row["url"], "soft-error-similarity", {"ratio": round(ratio,3), "hint": "similar to bounded missing-path baseline; manual review required"}, "native", identity="soft:" + row["url"] + ":" + row["hash"])
+                        self.store.observed(row["url"], "soft-error-similarity", {"hash": row["hash"], "ratio": round(ratio,3), "hint": "similar to bounded missing-path baseline; manual review required"}, "native", identity="soft:" + row["url"] + ":" + row["hash"])
             if row["hash"]:
                 self.store.relate(row["url"], "content-group:" + row["hash"], "exact_response_group", "native")
 

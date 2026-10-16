@@ -34,16 +34,20 @@ vulnerability. Historical and inferred URLs never establish current reachability
 
 ## Validation actually executed
 
-- Linux x86-64 / Python 3.12.14: **228 passed, no skips**, in both the development
-  environment and a fresh hash-pinned installation (11.98 seconds each).
-- A separate hash-pinned Linux Python **3.13.5** environment also passed **228
-  tests, no skips** (11.74 seconds), plus demo, localhost, resume and offline rerun.
-- All three suites executed real reviewed Gitleaks 8.30.1 and jsluice binaries.
+- Final expanded Linux suites: **268 passed, zero failures/skips** on Python
+  **3.12.14** (11.89 seconds) and **3.13.5** (12.17 seconds), with actual reviewed
+  Gitleaks 8.30.1 and jsluice binaries. Earlier fresh hash-pinned installation
+  verification also passed; dependency pins remain unchanged.
+- Added 40 Python cases plus reproducible localhost/browser verification utilities.
+  Fixed hidden filtered rows, combined-source filtering, lost structured-context
+  or extension-method evidence, stale soft-404 penalties, and MIME/extension case
+  handling. No scope permission, schema or policy revision was changed.
 - Offline full-selection demo and scoped localhost collection: **13 GETs**, no
   forbidden POSTs, excluded endpoints or out-of-scope redirects. Resume and offline
   rerun sent zero new requests; rerun preserved parent bytes and directory entries.
-- Headless Chromium 154.0.8037.57 rendered local report HTML and passed view/search
-  checks with zero browser errors and external requests. Direct file navigation was
+- Headless Chromium 154.0.8037.57 passed **15 browser checks**, including visible
+  filters, nested evidence, empty reports and narrow layout, with zero browser/console
+  errors and external requests. Direct file navigation was
   blocked by the managed browser; this used Playwright `setContent`.
 - Compilation, dependency consistency and Git whitespace checks passed. Source
   Gitleaks review found only the two existing deliberately synthetic fixture tokens.
@@ -67,7 +71,8 @@ filesystem report navigation remain unverified. Existing CI covers Linux/Windows
 native enumeration; URLFinder uses CDX fallback only when explicitly enabled.
 Process/file limits are cooperative monitoring, not OS resource quotas.
 
-See `docs/V3_PROGRESS.md` for reproducible commands and exact output locations,
+See `docs/V3_REGRESSION.md` for the scenario matrix, reproducible checks and actual
+localhost screenshots; `docs/V3_PROGRESS.md` records exact output locations,
 `docs/V3_ARCHITECTURE.md` for implementation details, and README for Linux/PowerShell
 installation and local demo commands. This change builds on merged V2; dependency
 versions and policy revision are unchanged.

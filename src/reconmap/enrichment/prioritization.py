@@ -23,7 +23,8 @@ STATIC_EXTENSIONS = re.compile(r"\.(?:css|less|scss|woff2?|ttf|otf|eot|png|jpe?g
 def classify_route(url, mime=""):
     """Paths carry route semantics; filenames and query text do not grant them."""
     path = unquote(urlsplit(url).path).lower()
-    static = bool(STATIC_EXTENSIONS.search(path) or mime.lower().split(';')[0] in {
+    mime = mime.split(';', 1)[0].strip().lower()
+    static = bool(STATIC_EXTENSIONS.search(path) or mime in {
         "text/css", "application/javascript", "text/javascript", "application/pdf",
         "application/octet-stream"} or mime.startswith(("image/", "font/", "audio/", "video/")))
     if static:

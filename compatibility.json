@@ -1,5 +1,5 @@
 {
-  "checked_date": "2026-10-15",
+  "checked_date": "2026-10-16",
   "python_execution_verified": [
     "3.12.14/linux-x86_64",
     "3.13.5/linux-x86_64"
@@ -189,8 +189,9 @@
     "windows_executed": false,
     "python_313_executed": true,
     "active_binaries_executed": false,
-    "tests": "228 passed, no skips, in both Python 3.12 installations and a separate hash-pinned Python 3.13.5 installation; Linux x86-64",
-    "browser": "Headless Chromium 154.0.8037.57 DOM/script checks passed via local HTML setContent; direct file navigation blocked by managed browser; zero external requests",
-    "python_313_workflows": "Offline demo, scoped loopback with real jsluice/Gitleaks (13 GETs), zero-request resume and immutable offline rerun passed"
+    "tests": "268 passed, zero failures/skips, on Linux Python 3.12.14 (11.89s) and 3.13.5 (12.17s), both with actual reviewed offline tools",
+    "browser": "15 Chromium 154.0.8037.57 / Playwright 1.62.1 checks passed via local HTML setContent: visible filters, navigation, empty report and narrow layout; zero browser/console errors or external requests. Direct file navigation remains blocked by managed browser.",
+    "python_313_workflows": "Offline demo, scoped loopback with real jsluice/Gitleaks (13 GETs), zero-request resume and immutable offline rerun passed",
+    "regression_evidence": "docs/V3_REGRESSION.md; real-tool and missing-tool workflows passed 13 checks each"
   }
 }

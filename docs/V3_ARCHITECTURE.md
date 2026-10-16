@@ -158,3 +158,13 @@ The original exports are preserved. Core normalization/ranking always runs;
 See [V3_PROGRESS.md](V3_PROGRESS.md) for exact test, installation, real-tool and
 browser evidence. Linux Python 3.12/3.13 are verified; native Windows and live
 providers require separate execution verification. Configuration of a CI job is not evidence that it ran.
+
+
+Regression details and browser screenshots are in [V3_REGRESSION.md](V3_REGRESSION.md).
+Method/context canonicalization is shared when building and attaching normalized
+records. Valid extension methods remain distinct; invalid method metadata remains
+UNKNOWN with its original evidence. Soft-404 penalties require a matching current
+response hash and current-run observation. MIME parsing is case-insensitive while
+URL path case remains preserved. Report filters open matching ancestor sections,
+hide empty views and match each discovery source independently. No collector
+permission or raw-evidence retention behavior changes with these report fixes.

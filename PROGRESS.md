@@ -203,3 +203,20 @@ https://github.com/Theghost2004/TheGodRecon/pull/new/feature/thegodrecon-v3 .
   and REST reads still returned Forbidden; no PR was created in this session.
 
 Full evidence and reproducible commands: [V3 progress](docs/V3_PROGRESS.md).
+
+
+### V3 expanded regression pass — 2026-10-16
+
+- [x] Fixed reproduced filtering, source-correlation, normalization, stale soft-404
+  and MIME/extension handling defects; added 40 Python cases and reusable checks.
+- [x] Final **268 passed, no failures/skips**, on Linux Python 3.12 and 3.13 with
+  real Gitleaks/jsluice. Fifteen browser checks passed with zero console/browser
+  errors or external requests. Real-tool and missing-tool localhost workflows passed.
+- [x] Actual screenshots are in `docs/images/`; the full scenario matrix, commands
+  and limits are in [docs/V3_REGRESSION.md](docs/V3_REGRESSION.md).
+- [ ] Native Windows and direct active-tool containment remain unverified. These
+  results do not claim all possible defects or inputs have been exhausted.
+
+Output root: `/workspace/TheGodRecon/recon-output/v3-regression/`. Raw evidence,
+reports, environments and binaries remain excluded from Git. Only reviewed
+localhost fixture screenshots are included with the source/docs/tests.

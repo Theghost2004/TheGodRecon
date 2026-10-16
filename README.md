@@ -152,7 +152,7 @@ py -3.12 -m venv .venv
 
 These commands do not require running an activation script or changing PowerShell execution policy. Use the executable path above instead of `reconmap` in the examples below. Keep the checkout/output root short (for example `C:\dev\reconmap`) on systems without long paths enabled. New Windows run folders receive a current-user-only ACL using the built-in `whoami` and `icacls`; if that fails, collection refuses to write sensitive artifacts. Raw artifacts are not suitable for public web hosting. Linux directories use mode 0700 and content files 0600.
 
-Linux/Python **3.12.14 and 3.13.5** have actually been tested in this cloud (228 tests each, including real offline tools). Native Windows is **not yet execution-verified**; a Linux/Windows CI matrix covers both versions, installation, core/localhost tests, process cleanup and offline Gitleaks. macOS and ARM64 are unverified additional platforms, not claimed support. Optional external binary compatibility is separate from Python compatibility; see [TOOLS.md](docs/TOOLS.md) and [compatibility.json](compatibility.json).
+Linux/Python **3.12.14 and 3.13.5** have actually been tested in this cloud (268 tests each, including real offline tools). Native Windows is **not yet execution-verified**; a Linux/Windows CI matrix covers both versions, installation, core/localhost tests, process cleanup and offline Gitleaks. macOS and ARM64 are unverified additional platforms, not claimed support. Optional external binary compatibility is separate from Python compatibility; see [TOOLS.md](docs/TOOLS.md) and [compatibility.json](compatibility.json).
 
 ## Configure and run
 
@@ -200,6 +200,25 @@ reconmap validate --run ./recon-output/example.com --finding FINGERPRINT --statu
 ```
 
 ## Local fixtures and verification
+
+The expanded V3 pass completed **268 tests on each Linux interpreter (3.12/3.13)**
+and **15 browser checks**. See the [scenario matrix, fixes and actual screenshots](docs/V3_REGRESSION.md).
+Filters reveal matches inside collapsed sections and accept individual correlated
+sources. Structured contexts, extension methods and raw evidence remain attached;
+MIME case and old soft-404 observations no longer distort the current shortlist.
+
+A reproducible end-to-end check starts and stops its own loopback server, exercises
+demo collisions, caps, resume and immutable rerun, and writes reviewable reports:
+
+```text
+python tools/verify_local_workflow.py --output-root ./recon-output/workflow-check-1
+```
+
+Choose a new output root for each check. Supply optional `--tool NAME=PATH` overrides
+to exercise reviewed local binaries; missing tools use the existing fallbacks.
+The optional `tools/check_report_browser.cjs` checks actual browser visibility and
+captures screenshots; its separate Playwright requirements are in the linked
+verification guide.
 
 The tests start their own loopback HTTP servers and use synthetic tool/provider outputs. No public target is requested. A manual loopback smoke run works in both terminals using these commands in separate windows (substitute platform-specific Python/reconmap paths):
 

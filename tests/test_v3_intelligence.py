@@ -232,3 +232,78 @@ def test_methodless_correlation_keeps_other_unobserved_family_members_visible(sc
         scanner.store.observed(url, 'inferred_endpoint', {'method': 'UNKNOWN'}, 'jsluice')
     candidates = prioritize(scanner.store, PrioritySettings())
     assert {(c['url'], c['method']) for c in candidates if c['representative']} == {(observed, 'GET'), (other, 'UNKNOWN')}
+
+
+@pytest.mark.parametrize('method,expected', [('M-SEARCH', 'M-SEARCH'), ('GET', 'GET'), ('BAD METHOD', 'UNKNOWN'), (42, 'UNKNOWN'), (0, 'UNKNOWN'), (False, 'UNKNOWN'), (None, 'UNKNOWN')])
+def test_normalization_retains_evidence_for_extension_and_invalid_methods(scanner, method, expected):
+    url = 'https://example.com/api/extension'
+    scanner.add_url(url, 'fixture', fetch=False)
+    scanner.store.observed(url, 'inferred_endpoint', {'method': method, 'hash': 'a'*64}, 'jsluice')
+    record, = normalize_evidence(scanner.store)
+    assert record['method'] == expected
+    assert record['inferred_endpoints'][0]['method'] == method
+    assert any(e['kind'] == 'inferred_endpoint' for e in record['evidence'])
+    assert record['current_status'] is None and not scanner.store.rows('jobs')
+
+
+def test_structured_authorization_context_keeps_evidence_and_canonical_identity(scanner):
+    url = 'https://example.com/api/users'
+    scanner.add_url(url, 'fixture', fetch=False)
+    for context in [{'role': 'analyst', 'tenant': 'one'}, {'tenant': 'one', 'role': 'analyst'}, {'tenant': 'two', 'role': 'analyst'}]:
+        scanner.store.observed(url, 'inferred_endpoint', {'method': 'GET', 'authorization_context': context}, 'fixture')
+    records = normalize_evidence(scanner.store)
+    assert len(records) == 2
+    assert sorted(len(r['inferred_endpoints']) for r in records) == [1, 2]
+    assert all(r['current_status'] is None for r in records)
+
+
+@pytest.mark.parametrize('mime', ['Image/PNG', ' IMAGE/PNG ; charset=binary', 'Application/JavaScript', 'TEXT/CSS'])
+def test_case_insensitive_mime_never_promotes_static_route_names(scanner, mime):
+    url = response(scanner, '/api/admin/users', 'ordinary static content', mime=mime)
+    row = ranked(scanner)[url]
+    assert row['classification'] == 'static' and row['tier'] == 'inventory'
+
+
+def test_parent_soft404_does_not_suppress_fresh_login_evidence(scanner):
+    response(scanner, '/__reconmap_missing_fixture', '<title>Missing</title>old fallback')
+    url = response(scanner, '/admin/login', '<title>Missing</title>old fallback')
+    scanner.correlate()
+    assert 'soft-404' in ranked(scanner)[url]['signals']
+    scanner.store.execute("UPDATE observations SET source='parent:' || source")
+    response(scanner, '/admin/login', '<title>Sign in</title><form><input type="password"></form>')
+    row = ranked(scanner)[url]
+    assert 'soft-404' not in row['signals']
+    assert row['tier'] == 'high-interest'
+    assert any(e['kind'] == 'soft-error-similarity' for e in row['evidence'])
+
+
+def test_case_insensitive_response_mime_still_extracts_scripts_and_forms(scanner):
+    bundle = response(scanner, '/assets/bundle', 'fetch("/api/from-mixed-case-mime");', mime='Application/JavaScript ; charset=utf-8')
+    login = response(scanner, '/sign-in', '<form><input type="password"></form>', mime='TEXT/HTML ; charset=utf-8')
+    rows = ranked(scanner)
+    assert rows[bundle]['classification'] == 'static'
+    assert rows['https://example.com/api/from-mixed-case-mime']['inferred_endpoints']
+    assert rows[login]['classification'] == 'authentication'
+    assert rows[login]['tier'] == 'high-interest'
+
+
+@pytest.mark.parametrize('extension', ['.JS', '.mjs', '.MAP'])
+def test_script_and_source_map_extensions_keep_case_sensitive_urls(scanner, extension):
+    body = json.dumps({'version': 3, 'sources': ['original.js'], 'sourcesContent': ['fetch("/api/from-extension");'], 'mappings': ''}) if extension == '.MAP' else 'fetch("/api/from-extension");'
+    url = response(scanner, '/assets/bundle' + extension, body, mime='text/plain')
+    rows = ranked(scanner)
+    assert url.endswith(extension)
+    assert rows['https://example.com/api/from-extension']['inferred_endpoints']
+
+
+def test_soft404_from_an_older_response_does_not_apply_to_new_body(scanner):
+    response(scanner, '/__reconmap_missing_fixture', '<title>Missing</title>old fallback')
+    url = response(scanner, '/admin/login', '<title>Missing</title>old fallback')
+    scanner.correlate()
+    # Legacy soft-error records stored the body hash in the identity only.
+    scanner.store.execute("UPDATE observations SET data='{}' WHERE kind='soft-error-similarity'")
+    assert 'soft-404' in ranked(scanner)[url]['signals']
+    response(scanner, '/admin/login', '<title>Sign in</title><form><input type="password"></form>')
+    row = ranked(scanner)[url]
+    assert 'soft-404' not in row['signals']
+    assert 'conflicting-observations' in row['signals']
