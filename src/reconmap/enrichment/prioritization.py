@@ -37,6 +37,10 @@ def classify_route(url, mime=""):
 def source_family(source):
     while source.startswith('parent:'):
         source = source.removeprefix('parent:')
+    if source.startswith('wordlist:'):
+        return 'dictionary-proposal'
+    if source == 'observed-api-prefix':
+        return 'evidence-supplement'
     if source == 'parent-candidate':
         return None  # copied evidence is not an independent discovery
     if source in {'seed','link','script','redirect','bounded-baseline','exposure-profile-v1','form-action','robots-sitemap','sitemap'}:
@@ -146,6 +150,10 @@ def prioritize(store, settings):
         if not observed:
             penalties.append("Current reachability unverified: " + record["reachability"])
             score = min(score, 30 if inferred else 20)
+        dictionary_only = bool(families) and families <= {'dictionary-proposal','evidence-supplement'} and not inferred and not record['historical'] and not record['prior_http']
+        if not observed and dictionary_only:
+            penalties.append("Untested dictionary/prefix proposal; names alone do not justify analyst shortlist placement")
+            score = min(score, 5)
         if "conflicting-observations" in signals or "truncated" in signals:
             penalties.append("Conflicting or incomplete responses require manual comparison")
             score = min(score, 40)

@@ -123,6 +123,11 @@ def generate_report(run: Path, store: Store | None = None) -> None:
             data[table] = [json.loads(row[column]) for row in data[table]]
         candidates = sorted(data["investigation_candidates"], key=lambda c: (-c["score"], c["url"], c["identity"]))
         shortlist = [c for c in candidates if c["representative"] and c["tier"] != "inventory"]
+        from .coverage import summarize, discovery_rows
+        coverage = redact_data(summarize(store))
+        data['wordlist_discoveries'] = [redact_data(r) for r in discovery_rows(store)]
+        data['javascript_discoveries'] = [r for r in data['observations'] if r['kind'] in {'inferred_endpoint','unresolved_expression','artifact-analysis'}]
+        data['tool_coverage'] = coverage['tools']
         run_summary = {
             "selected_tools": [t["name"] for t in data["tool_executions"]],
             "executed_tools": [t["selected_primary_tool"] for t in data["stage_results"] if t["selected_primary_tool"] in t["actual_execution_engines"] and t["primary_status"] == "completed"],
@@ -133,8 +138,10 @@ def generate_report(run: Path, store: Store | None = None) -> None:
             "duplicate_cards_suppressed": sum(not c["representative"] for c in candidates), "low_value_inventory": sum(c["tier"] == "inventory" for c in candidates),
             "target_requests": store.meta("requests", 0), "owned_provider_requests": store.meta("provider_requests", 0), "runtime_seconds": round(store.meta("elapsed_seconds", 0), 2),
         }
+        run_summary["discovery_coverage"] = coverage
         reports = run/"reports"
         reports.mkdir(exist_ok=True)
+        atomic_json(reports/"coverage.json", coverage)
         atomic_json(reports/"findings.json",data["findings"])
         atomic_json(reports/"investigation.json", {"summary": run_summary, "shortlist": shortlist, "all_results": candidates})
         atomic_json(reports/"stage-results.json", data["stage_results"])
@@ -143,7 +150,7 @@ def generate_report(run: Path, store: Store | None = None) -> None:
             with (run/"normalized"/(table+".jsonl")).open("w",encoding="utf-8") as f:
                 for row in rows:
                     f.write(json.dumps(row,ensure_ascii=True)+"\n")
-        for table in ("findings","urls","parameters","historical_urls","infrastructure","technologies","url_groups","endpoint_priority","investigation_candidates","normalized_records","stage_results"):
+        for table in ("findings","urls","parameters","historical_urls","infrastructure","technologies","url_groups","endpoint_priority","investigation_candidates","normalized_records","stage_results","wordlist_discoveries","javascript_discoveries","tool_coverage"):
             rows=data[table]
             keys=list(rows[0]) if rows else {"findings":["fingerprint","rule","subject","title","priority","confidence","severity","validation"],"urls":["url","state","status"],"parameters":["url","name","location","source"]}.get(table, ["No records"])
             with (reports/(table+".csv")).open("w",encoding="utf-8-sig",newline="") as f:
@@ -205,6 +212,20 @@ def generate_report(run: Path, store: Store | None = None) -> None:
                 sections.append(f'<section data-view="{label}" id="{anchor}"><h2>{label} ({len(rows)})</h2><details><summary>{description}</summary>{body_text}</details></section>')
             else:
                 sections.append(f'<section data-view="{label}" id="{anchor}"><h2>{label} ({len(rows)})</h2>{body_text}</section>')
+        coverage_views = {"JavaScript Discoveries":"javascript_discoveries", "Wordlist Discoveries":"wordlist_discoveries", "Tool Execution and Coverage":"tool_coverage"} if config.get('discovery',{}).get('enabled') else {}
+        for label, key in coverage_views.items():
+            body = []
+            for row in data[key]:
+                index = len(records)
+                records.append({"section":label, **row})
+                title = row.get('url') or row.get('subject') or row.get('tool')
+                if key == 'tool_coverage':
+                    title = f"{row['tool']} | Installed: {row['installed']} | Compatible: {row['compatible']} | {row['primary_status']} | Ran: {row['actually_ran']} | Engine: {', '.join(row['engines']) or 'none'} | {row['records']} records / {row['duration_seconds']:.2f}s"
+                elif key == 'wordlist_discoveries':
+                    title += f" | {'Tested: '+str(row['status']) if row['tested'] else 'Untested proposal'} | {row['source']}"
+                body.append(f'<details data-record="{index}"><summary>{html.escape(str(title))}</summary><pre>{html.escape(json.dumps(row,indent=2,ensure_ascii=False))}</pre></details>')
+            anchor = label.lower().replace(' ','-')
+            sections.append(f'<section data-view="{label}" id="{anchor}"><h2>{label} ({len(data[key])})</h2>{"".join(body) or "<p>No records.</p>"}</section>')
         views = ("tool_executions","stage_results","stages","historical_urls","infrastructure","technologies","url_groups","url_group_members","parameters","observations","findings","lineage","changes")
         secondary = []
         for section in views:
@@ -223,20 +244,25 @@ def generate_report(run: Path, store: Store | None = None) -> None:
         diff=html.escape(diff_path.read_text(encoding="utf-8")) if diff_path.exists() else "No baseline selected"
         payload=json.dumps(records,ensure_ascii=True).replace("<","\\u003c").replace(">","\\u003e").replace("&","\\u0026")
         script_hash = base64.b64encode(hashlib.sha256(REPORT_SCRIPT.encode()).digest()).decode()
+        from . import __version__
         document=f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-{script_hash}'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; base-uri 'none'; form-action 'none'">
 <title>reconmap {html.escape(manifest['host'])}</title>
 <style>body{{font:16px system-ui;max-width:1100px;margin:2rem auto;padding:1rem;background:#101827;color:#e5ecfa;overflow-wrap:anywhere}}input,select{{padding:.6rem;margin:.3rem;max-width:100%;box-sizing:border-box}}label{{display:inline-block;max-width:100%}}details{{border:1px solid #43516b;margin:.4rem 0;padding:.5rem}}pre{{white-space:pre-wrap;overflow-wrap:anywhere}}a{{color:#9fccff}}[hidden]{{display:none}}small{{color:#bbcae0}}</style>
-<h1>TheGodRecon V3: {html.escape(manifest['host'])}</h1><p>State: {html.escape(manifest['state'])} · Transport: {html.escape(manifest.get('transport',''))} · Requests reserved: {manifest.get('requests',0)}</p>
+<h1>TheGodRecon {__version__}: {html.escape(manifest['host'])}</h1><p>State: {html.escape(manifest['state'])} · Transport: {html.escape(manifest.get('transport',''))} · Requests reserved: {manifest.get('requests',0)}</p>
 <p>Investigation leads require manual validation. Raw artifacts may contain sensitive content. No target resource is loaded by this report.</p>
 <p>Historical URLs are archive metadata, not current liveness. Rerun observations may be reused from a parent's collection timestamp. Technology confidence does not confirm a software version or vulnerability.</p>
 <details><summary>Effective scope and budgets</summary><pre>{html.escape(json.dumps(config,indent=2))}</pre></details>
-<nav>{' · '.join(f'<a href="#{label.lower().replace(" ", "-")}">{label}</a>' for label in primary_views)}</nav>
+<nav>{' · '.join(f'<a href="#{label.lower().replace(" ", "-")}">{label}</a>' for label in (*primary_views, *coverage_views))}</nav>
 <p><strong>{run_summary['high_interest']} high-interest · {run_summary['manual_review']} manual-review</strong> · {run_summary['currently_observed_assets']} currently observed / {run_summary['discovered_assets']} discovered · {run_summary['duplicate_cards_suppressed']} repeated cards grouped · {run_summary['low_value_inventory']} low-value records retained · {run_summary['runtime_seconds']}s runtime.</p>
 <p>Selected tools: {html.escape(', '.join(run_summary['selected_tools']) or 'Native modules')}<br>Successfully executed: {html.escape(', '.join(run_summary['executed_tools']) or 'See native execution details')}<br>Native fallbacks: {html.escape(', '.join(s.replace('-', ' ') for s in run_summary['native_fallbacks']) or 'None')}</p>
 <details><summary>Partial or missing coverage ({len(run_summary['partial_coverage'])})</summary><pre>{html.escape(json.dumps(run_summary['partial_coverage'],indent=2))}</pre></details>
 <p><a href="investigation.json" download>Investigation export</a> · <a href="snapshot.json" download>Complete redacted snapshot</a> · <a href="stage-results.json" download>Execution accounting</a></p>
-<label>Search <input id="search" type="search"></label><label>Section <select id="filter"><option value="">All</option>{''.join(f'<option>{s}</option>' for s in (*primary_views, *views))}</select></label>
+<details><summary>Crawler summary — {coverage['crawler']['urls_tested']} tested / {coverage['crawler']['urls_discovered']} discovered</summary><pre>{html.escape(json.dumps(coverage['crawler'],indent=2))}</pre></details>
+<p>Stop reason: {html.escape(coverage['crawler']['stop_reason'])}. Discovery requests: {coverage['discovery']['requests']} / {coverage['discovery']['request_cap']}.</p>
+<details><summary>JavaScript artifact coverage and wordlists actually used</summary><pre>{html.escape(json.dumps({'javascript':coverage['javascript'], 'discovery':coverage['discovery']},indent=2))}</pre></details>
+<p><a href="coverage.json" download>Coverage diagnostics</a> · <a href="wordlist_discoveries.csv" download>Wordlist discovery export</a></p>
+<label>Search <input id="search" type="search"></label><label>Section <select id="filter"><option value="">All</option>{''.join(f'<option>{s}</option>' for s in (*primary_views, *coverage_views, *views))}</select></label>
 <label>Status <select id="status"><option value="">All</option></select></label><label>Confidence <select id="confidence"><option value="">All</option></select></label><label>Source <select id="source"><option value="">All</option></select></label><label>Minimum priority <input id="priority" type="number" min="0" max="100" style="width:5rem"></label>
 <p id="filter-summary" role="status" aria-live="polite"></p>
 {''.join(sections)}<details><summary>Evidence relationships</summary>{relations}</details><details><summary>Restricted source artifacts</summary><ul>{artifacts}</ul></details><details><summary>Comparison</summary><pre>{diff}</pre></details>

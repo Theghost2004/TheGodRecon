@@ -40,3 +40,15 @@ def execution_status(info) -> str:
     if not info.available:
         return "unavailable"
     return "ready" if info.supported else "incompatible"
+
+
+NATIVE_COVERAGE = {
+    "subfinder": "Seed and captured-reference inventory only; no equivalent passive native subdomain enumeration",
+    "urlfinder": "Explicit Wayback/CDX enrichment can supply history; archived URLs are not current observations",
+    "dnsx": "Bounded native address resolution and DNS observations; no full dnsx record-enumeration parity",
+    "httpx": "Scoped GET requests, response headers/body/title, pinned destinations; no extra port or protocol sweep",
+    "katana": "HTML/base links, scripts, sitemap indexes and code-derived GET routes; no browser or scripted actions",
+    "jsluice": "Tree-sitter literal routes, methods and embedded source maps; dynamic expressions remain unresolved",
+    "gitleaks": "Local secret syntax patterns; fewer rules than Gitleaks and no credential validation",
+    "nuclei": "Two extra GET probes (.git/HEAD and .env), plus bounded signatures on captured responses; no Nuclei templates or exploitation",
+}

@@ -34,6 +34,7 @@ class Settings(StrictModel):
     auto_open: bool = False
     progress: bool = True
     last_run: str | None = None
+    seclists_directory: str | None = None
 
 
 def load_settings() -> Settings:

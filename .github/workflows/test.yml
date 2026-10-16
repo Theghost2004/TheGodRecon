@@ -36,6 +36,7 @@ jobs:
           reconmap --version
           reconmap plan example.com --quick --json
           reconmap plan example.com --all-tool --json
+          reconmap plan example.com --god-mode --json
           reconmap settings --set progress false
           reconmap doctor --json
           reconmap doctor --tool gitleaks=.tools/bin/gitleaks${{ runner.os == 'Windows' && '.exe' || '' }} --tool subfinder=.tools/bin/subfinder${{ runner.os == 'Windows' && '.exe' || '' }} --tool urlfinder=.tools/bin/urlfinder${{ runner.os == 'Windows' && '.exe' || '' }}
@@ -47,6 +48,19 @@ jobs:
           reconmap demo --output-root v2-demo-output --enrich tech,dedup,priority
           reconmap rerun --from v2-demo-output/example.com --modules analysis --mode offline --enrich tech,dedup,priority
           reconmap report --run v2-demo-output/1_example.com
+      - name: God Mode fixtures and preserved discovery allocation
+        shell: python
+        run: |
+          import json, pathlib, subprocess, sys
+          result = subprocess.run([sys.executable, "-m", "reconmap", "scan", "example.com", "--god-mode", "--mode", "demo", "--output-root", "god-demo-output", "--no-progress"])
+          assert result.returncode == 2, result.returncode  # Explicit optional/policy limitations
+          run = pathlib.Path("god-demo-output/example.com")
+          before = json.loads((run/"manifest.json").read_text())["requests"]
+          resumed = subprocess.run([sys.executable, "-m", "reconmap", "resume", str(run), "--no-progress"])
+          assert resumed.returncode == 2
+          assert json.loads((run/"manifest.json").read_text())["requests"] == before
+          coverage = json.loads((run/"reports/coverage.json").read_text())
+          assert coverage["discovery"]["requests"] <= coverage["discovery"]["request_cap"]
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -54,3 +68,4 @@ jobs:
           path: |
             demo-output/
             v2-demo-output/
+            god-demo-output/

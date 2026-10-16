@@ -28,6 +28,11 @@ def add_scan_arguments(parser, *, rerun=False):
     presets.add_argument("--preset", choices=["quick", "standard", "deep"])
     for name in ("quick", "standard", "deep"):
         presets.add_argument("--" + name, dest="preset", action="store_const", const=name)
+    parser.add_argument("--god-mode", "--full-coverage", action="store_true", help="All eligible capabilities plus bounded wordlist discovery; retains scope and policy")
+    parser.add_argument("--wordlist", type=Path, action="append", default=[], help="Local custom path dictionary; selects bounded content discovery")
+    parser.add_argument("--wordlist-budget", type=int, help="Discovery request sub-budget, at most 20%% of global ceiling")
+    parser.add_argument("--max-wordlist-entries", type=int)
+    parser.add_argument("--max-concurrent-jobs", type=int, help="1–2 independent passive/local tool tasks; target HTTP remains centrally serialized")
     parser.add_argument("--no-progress", action="store_true", help="Use plain stage logs")
     parser.add_argument("--enrich", help="asn,wayback,tech,dedup,priority; all or none")
     parser.add_argument("--modules", help="Legacy comma-separated module selection")

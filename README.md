@@ -65,6 +65,7 @@ Run `reconmap` with no arguments in a terminal for the interactive menu. In scri
 | `reconmap scan HOST` | Balanced scan with exact-host defaults |
 | `reconmap scan HOST --quick` | Smaller request and depth limits |
 | `reconmap scan HOST --deep` | Larger bounded scan with local analysis tools |
+| `reconmap scan HOST --god-mode` | All capabilities plus bounded evidence/wordlist discovery; alias `--full-coverage` |
 | `reconmap scan HOST --all-tool` | Select all eight capabilities; same as `--tools all` |
 | `reconmap scan HOST --config scope.yaml` | Use your reusable authorization and scan settings |
 | `reconmap scan HOST --no-progress` | Plain stage logs |
@@ -76,6 +77,32 @@ Run `reconmap` with no arguments in a terminal for the interactive menu. In scri
 | `reconmap settings --set auto_open true` | Opt into opening reports after scans |
 
 `--standard`, `--preset quick/standard/deep`, and `--all-tools` are also supported. Existing `--target`, `--profile`, `--tools`, `--modules`, `plan`, `rerun`, `diff`, and `report --run` commands remain available. Use `reconmap --help` or a command's `--help` for details.
+
+## God Mode
+
+Use maximum supported coverage on an explicitly authorized target:
+
+```bash
+reconmap scan example.com --god-mode
+reconmap scan example.com --full-coverage --max-requests 5000 --depth 3 --max-minutes 30
+```
+
+Both aliases combine passive discovery, HTTP mapping, crawling, JavaScript analysis, secret detection, curated content discovery and evidence-based reporting. Scope and shared budgets still apply. The discovery allocation defaults to 100 requests and never exceeds 20% of the global ceiling, including retries and descendants. Restricted executables retain their native fallbacks; coverage reports explain what actually ran. Standard scans remain lightweight.
+
+## SecLists
+
+Linux bootstrap/setup installs or reuses **four reviewed SecLists dictionaries plus their license** (about 237 KB), rather than the complete collection. Use `python tools/bootstrap.py --skip-wordlists` to decline, or explicitly install on either supported platform:
+
+```bash
+reconmap setup --with-seclists --yes
+reconmap wordlists doctor
+reconmap wordlists list
+reconmap scan example.com --wordlist /path/to/custom.txt
+```
+
+The managed location is `$XDG_DATA_HOME/thegodrecon/wordlists/seclists` (normally `~/.local/share/thegodrecon/wordlists/seclists`) on Linux and `%LOCALAPPDATA%\thegodrecon\wordlists\seclists` on Windows. A matching `/usr/share/seclists` copy is reused. `RECONMAP_CONFIG_DIR` makes settings and wordlists portable together.
+
+God Mode selects small common paths, supplements observed APIs, and uses captured JavaScript or current application fingerprints to choose relevant entries. Exact-host scope never expands into subdomains. Custom UTF-8 lists use the same scope and discovery limits. Scans only read local lists; missing lists are an optional coverage limitation. [Detailed behavior and YAML options](docs/GOD_MODE.md).
 
 ## How the Tool Works
 

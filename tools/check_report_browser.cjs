@@ -125,6 +125,37 @@ const { chromium } = require(process.env.RECONMAP_PLAYWRIGHT_MODULE || 'playwrig
       assert(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await page.screenshot({ path: path.join(directory, 'mobile.png'), fullPage: true });
     });
+    if (await page.locator('#wordlist-discoveries').count()) {
+      await page.setViewportSize({ width: 1440, height: 1100 });
+      await check('wordlist provenance and tested status visible', async () => {
+        await reset();
+        await select('filter', 'Wordlist Discoveries');
+        await page.locator('#search').fill('custom:1');
+        assert(await visible().count() > 0);
+        assert.match(await visible().first().innerText(), /Tested:|Untested proposal/);
+        await visible().first().locator(':scope > summary').click();
+        assert.match(await visible().first().innerText(), /wordlist_hash|provenance/);
+        await page.evaluate(() => scrollTo(0, 0));
+        await page.screenshot({ path: path.join(directory, 'wordlists.png'), fullPage: true });
+      });
+      await check('tool coverage distinguishes restriction and actual engine', async () => {
+        await reset();
+        await select('filter', 'Tool Execution and Coverage');
+        assert.equal(await visible().count(), 8);
+        const http = visible().filter({ hasText: 'httpx |' }).first();
+        assert.match(await http.innerText(), /blocked-by-policy/);
+        assert.match(await http.innerText(), /native-aiohttp/);
+        assert.match(await http.innerText(), /Ran: False/);
+        await page.evaluate(() => scrollTo(0, 0));
+        await page.screenshot({ path: path.join(directory, 'tool-coverage.png'), fullPage: true });
+      });
+      await check('JavaScript evidence view is searchable', async () => {
+        await reset();
+        await select('filter', 'JavaScript Discoveries');
+        await page.locator('#search').fill('/api/admin/users');
+        assert(await visible().count() > 0);
+      });
+    }
     if(emptyReport) await check('empty partial report filters without errors', async () => {
       await page.goto('about:blank');
       await page.setContent(fs.readFileSync(emptyReport, 'utf8'));

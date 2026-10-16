@@ -32,12 +32,14 @@ async def invoke(scanner, info, cwd, input_path=None):
         error = ""
     except asyncio.CancelledError as exc:
         if hasattr(exc, "result"):
+            scanner.store.set_meta("executed:"+info.name, True)
             capture(exc.result, cwd)
         raise
     except (TimeoutError, ValueError) as exc:
         if not hasattr(exc, "result"):
             raise
         result, error = exc.result, str(exc)
+    scanner.store.set_meta("executed:"+info.name, True)
     capture(result, cwd)
     return result, error
 
@@ -50,8 +52,8 @@ def invocation_directory(scanner, name, suffix=""):
     return directory
 
 
-async def collect_passive(scanner):
-    for name in ("subfinder", "urlfinder"):
+async def _collect_passive(scanner, names):
+    for name in names:
         if name not in scanner.config.modules:
             continue
         previous = scanner.store.conn.execute("SELECT state FROM stages WHERE name=?", (name,)).fetchone()
@@ -114,6 +116,11 @@ def artifact_bases(scanner, artifact):
         if r[0].startswith(("http://", "https://"))}) or [scanner.manifest["target"]]
 
 
+def artifact_depth(scanner, base):
+    row = scanner.store.conn.execute("SELECT depth FROM jobs WHERE url=?", (base,)).fetchone()
+    return (row[0] if row else 0) + 1
+
+
 def emit_js(scanner, artifact, text, records, bases, capture_ref):
     # Method/option analysis is a safety veto, not a second discovery engine.
     routes, unresolved, _ = js_strings(text)
@@ -134,7 +141,7 @@ def emit_js(scanner, artifact, text, records, bases, capture_ref):
                 scanner.store.observed(url, "inferred_endpoint", {**redact_data(record), "method": method, "hash": artifact["hash"], "artifact": capture_ref,
                     "state": "inferred from code; never confirms execution"}, "jsluice",
                     identity=hashlib.sha256(f"{base}:{artifact['hash']}:{record}".encode()).hexdigest())
-                scanner.add_url(url, "jsluice", "artifact:" + artifact["hash"], fetch=method == "GET" and not method_restricted)
+                scanner.add_url(url, "jsluice", "artifact:" + artifact["hash"], depth=artifact_depth(scanner, base), fetch=method == "GET" and not method_restricted)
                 for location, key in (("query", "queryParams"), ("body-inferred", "bodyParams")):
                     for param in record.get(key, []) if isinstance(record.get(key, []), list) else []:
                         if isinstance(param, str):
@@ -143,7 +150,7 @@ def emit_js(scanner, artifact, text, records, bases, capture_ref):
                 scanner.store.observed(base, "invalid_reference", {"reason": str(exc)}, "jsluice")
     for base in bases:
         for candidate, provenance in source_maps(scanner.store, text, base):
-            scanner.add_url(candidate, provenance, "artifact:" + artifact["hash"])
+            scanner.add_url(candidate, provenance, "artifact:" + artifact["hash"], depth=artifact_depth(scanner, base))
 
 
 def native_artifact(scanner, name, artifact, text, bases):
@@ -154,11 +161,11 @@ def native_artifact(scanner, name, artifact, text, bases):
     for base in bases:
         refs = analyze_map(scanner.store, text, base, artifact["hash"], scanner.config.budgets.response_bytes, synthetic, scan_secrets=False) if artifact["kind"] == "map" else analyze_js(scanner.store, text, base, artifact["hash"], synthetic, scan_secrets=False)
         for candidate, provenance in refs:
-            scanner.add_url(candidate, provenance, "artifact:" + artifact["hash"], fetch=provenance != "inferred_endpoint_non_get")
+            scanner.add_url(candidate, provenance, "artifact:" + artifact["hash"], depth=artifact_depth(scanner, base), fetch=provenance != "inferred_endpoint_non_get")
 
 
-async def local_tools(scanner):
-    for name in ("jsluice", "gitleaks"):
+async def _local_tools(scanner, names):
+    for name in names:
         if name not in scanner.config.modules:
             continue
         info = scanner.tools[name]
@@ -233,14 +240,49 @@ async def local_tools(scanner):
                     synthetic = scanner.config.mode == "demo" or scanner.manifest.get("synthetic", False)
                     scanner.store.finding("gitleaks:" + record["RuleID"], "artifact:" + artifact["hash"], "Potential secret material (offline Gitleaks)",
                         {"hash": artifact["hash"], "line": record.get("StartLine"), "excerpt": "[REDACTED]", "synthetic": synthetic, "artifact": work["capture"], "next_check": "Review context locally; credential validity is untested"}, priority=5 if synthetic else 80, source="gitleaks")
-            if work["state"] != "completed" and fallback_allowed(scanner, name):
+            empty_js = name == "jsluice" and work["state"] == "completed" and not work["records"]
+            if (work["state"] != "completed" or empty_js) and fallback_allowed(scanner, name):
                 started = time.monotonic()
                 before = scanner.store.conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] + scanner.store.conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
                 native_artifact(scanner, name, artifact, text, bases)
                 count = scanner.store.conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] + scanner.store.conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0] - before
                 record_execution(scanner, name, engine=NATIVE_ENGINES[name], fallback=not work["supplementary"], count=count,
                     inputs=[artifact["path"]], seconds=time.monotonic()-started, accounting={"target_requests": 0, "provider_requests": 0},
-                    limitations=[] if work["supplementary"] else ["Native fallback has narrower coverage than the selected tool"])
+                    limitations=[] if work["supplementary"] or empty_js else ["Native fallback has narrower coverage than the selected tool"])
+            scanner.store.observed("artifact:"+artifact["hash"], "artifact-analysis", {
+                "tool": name, "primary_status": work["state"], "primary_records": len(work["records"]),
+                "fallback": work["state"] != "completed" or empty_js, "contexts": bases,
+                "reason": "Primary returned zero leads; native AST analysis also applied" if empty_js else work["detail"],
+                "hash": artifact["hash"], "artifact": work["capture"], "processed": True,
+            }, name, identity="artifact-analysis:"+context_key)
             scanner.store.set_meta(context_key, True)
         state = next((s for s in ("failed", "partial", "incompatible", "unavailable", "blocked-by-policy") if s in states), "completed")
         scanner.store.stage(name, state, "; ".join(dict.fromkeys(details))[:4000])
+
+
+async def _independent(scanner, names, worker):
+    """At most two bounded subprocess consumers; HTTP stays on its own queue."""
+    semaphore = asyncio.Semaphore(scanner.config.discovery.max_concurrent_jobs)
+    async def one(name):
+        async with semaphore:
+            try:
+                await worker(scanner, (name,))
+            except (OSError, ValueError, TimeoutError) as exc:
+                # Failed input/tool must not prevent the other local capability.
+                scanner.store.stage(name, "partial", redact(str(exc)))
+                record_execution(scanner, name, state="partial", reason=str(exc), limitations=["Some inputs unprocessed"])
+    tasks = [asyncio.create_task(one(name)) for name in names if name in scanner.config.modules]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done(): task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def collect_passive(scanner):
+    await _independent(scanner, ("subfinder", "urlfinder"), _collect_passive)
+
+
+async def local_tools(scanner):
+    await _independent(scanner, ("jsluice", "gitleaks"), _local_tools)

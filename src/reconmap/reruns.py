@@ -200,17 +200,17 @@ def rerun(args):
     parent = parent.resolve()
     if (args.target or args.target_pos) and (args.target or args.target_pos) != parent_manifest["target"]:
         raise ConfigError("Rerun keeps the parent seed; use scan for a different target")
-    if args.tools is None and args.modules is None and args.profile is None and not args.all_tool:
+    if args.tools is None and args.modules is None and args.profile is None and not args.all_tool and not args.god_mode:
         raise ConfigError("Rerun requires --tools, --modules or --profile; for local reanalysis use --tools offline")
     # Reuse the explicit saved authorization, unless a current YAML is supplied.
     args.resume = parent
     config = effective_config(args)
     if args.config is None:
         config.local_inputs = []
-    if args.enrich is None and args.profile != "full":
+    if args.enrich is None and args.profile != "full" and not args.god_mode:
         config.enrichments = [name for name in config.enrichments if name not in {"asn", "wayback"}]
     if args.tools is not None and all(BY_NAME[n].risk == "offline" for n in select_tools(args.tools)) and args.mode is None:
-        config = resolve_selection(config, tools=args.tools, mode="offline", enrich=args.enrich or (",".join(config.enrichments) if config.enrichments else "none"))
+        config = resolve_selection(config, tools=args.tools, mode="offline", enrich=args.enrich or (",".join(e for e in config.enrichments if e in {"tech","dedup","priority"}) or "none"))
     if config.mode == "demo":
         raise ConfigError("Fresh rerun uses --mode standard or offline; demo is a separate deterministic command")
     network_selected = (config.mode not in {"offline", "passive"} and bool({"http", "dns"} & set(config.modules))) or (config.mode != "offline" and bool({"subfinder", "urlfinder"} & set(config.modules) or {"asn", "wayback"} & set(config.enrichments)))

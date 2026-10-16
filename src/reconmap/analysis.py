@@ -22,6 +22,7 @@ class PageParser(HTMLParser):
         self.inline: list[str] = []
         self.comments: list[str] = []
         self.title = ""
+        self.base_href: str | None = None
         self.in_title = False
         self.in_script = False
         self.script_text: list[str] = []
@@ -37,6 +38,8 @@ class PageParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = dict(attrs)
+        if tag == "base" and self.base_href is None and a.get("href"):
+            self.base_href = a["href"][:8192]
         if tag == "input" and (a.get("type") or "").lower() == "password":
             self.password_input = True
         if tag == "title":

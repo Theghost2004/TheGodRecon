@@ -132,9 +132,32 @@ def verify(root, overrides):
         if rerun_code == 2:
             assert child['summary']['partial_coverage']
         checks += ['zero-request resume', 'zero-request immutable offline rerun']
+        # Same local site through the enhanced existing pipeline; no providers.
+        custom=root/'curated-custom.txt'
+        custom.write_text('admin\nprivate-documentation\nredirect\nlogout\nadmin/excluded\nassets/logo.png\n',encoding='utf-8')
+        god_root=root/'god-mode'
+        before_god=len(hits)
+        command(['scan',target,'--config',str(scope),'--god-mode','--wordlist',str(custom),'--wordlist-budget','5','--output-root',str(god_root),*tool_args],2)
+        god_run=god_root/'127.0.0.1'
+        god_coverage=json.loads((god_run/'reports/coverage.json').read_text())
+        god_hits=hits[before_god:]
+        assert god_coverage['discovery']['enabled'] and god_coverage['discovery']['requests']<=5
+        assert god_coverage['crawler']['requests_reserved']==len(god_hits)<=30
+        assert not {'/logout','/admin/excluded','/api/write'} & set(god_hits)
+        assert god_coverage['crawler']['stop_reason']
+        by_tool={t['tool']:t for t in god_coverage['tools']}
+        assert not any(by_tool[n]['actually_ran'] for n in ('subfinder','urlfinder','dnsx','httpx','katana','nuclei'))
+        assert 'native-aiohttp' in by_tool['httpx']['native_fallbacks']
+        used=json.loads((god_run/'reports/snapshot.json').read_text())['wordlist_discoveries']
+        assert used and all(r['wordlist_hash'] for r in used if r['wordlist'])
+        before_resume=list(hits)
+        command(['resume',str(god_run),'--no-progress'],2)
+        command(['rerun','--from',str(god_run),'--tools','offline',*tool_args],(0,2))
+        assert hits==before_resume
+        checks += ['God Mode discovery allocation and provenance','God Mode policy and tool accounting','God Mode resume/offline rerun without traffic']
         result = {'passed': checks, 'requests': len(hits), 'paths': hits, 'summary': report['summary'],
                   'resume_requests': 0, 'rerun_requests': 0, 'parent_unchanged': True,
-                  'report': str(run / 'reports/index.html')}
+                  'report': str(run / 'reports/index.html'), 'god_report':str(god_run/'reports/index.html'), 'god_paths':god_hits, 'god_coverage':god_coverage}
         (root / 'verification.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
         print(json.dumps(result, indent=2))
     finally:

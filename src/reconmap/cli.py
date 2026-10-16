@@ -43,6 +43,17 @@ def parser() -> Parser:
     setup.add_argument("--skip-tools",action="store_true")
     setup.add_argument("--go")
     setup.add_argument("--cc")
+    wordlist_setup = setup.add_mutually_exclusive_group()
+    wordlist_setup.add_argument("--with-seclists", dest="with_seclists", action="store_true", default=None)
+    wordlist_setup.add_argument("--skip-wordlists", dest="with_seclists", action="store_false")
+    setup.add_argument("--seclists-path", type=Path, help="Reuse an existing installation after pinned-file verification")
+    lists = commands.add_parser("wordlists", help="Local dictionary diagnostics and explicit pinned subset installation")
+    wordlist_commands = lists.add_subparsers(dest="wordlist_command", required=True, parser_class=Parser)
+    for name in ("list", "doctor", "update"):
+        item = wordlist_commands.add_parser(name)
+        item.add_argument("--json", action="store_true")
+        if name == "update":
+            item.add_argument("--yes", action="store_true")
     prefs=commands.add_parser("settings",help="Show or set non-sensitive user preferences")
     prefs.add_argument("--set",nargs=2,metavar=("KEY","VALUE"))
     resume=commands.add_parser("resume",help="Resume an existing scan with unchanged scope and budgets")
@@ -100,6 +111,11 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
         if args.tools is not None or args.modules is not None or args.profile is not None:
             raise ConfigError("--all-tool cannot be combined with --tools, --modules or --profile")
         args.tools = "all"
+    god_mode = getattr(args, "god_mode", False)
+    if god_mode and (args.all_tool or args.tools is not None or args.modules is not None or args.profile is not None or args.preset is not None):
+        raise ConfigError("--god-mode/--full-coverage selects a complete profile; do not combine with --all-tool, --tools, --modules, --profile or --preset")
+    if god_mode and args.resume and args.command != "rerun":
+        raise ConfigError("Resume uses the saved profile; use reconmap resume RUN or create a separate rerun")
     preset = getattr(args, "preset", None)
     if preset and (args.config or getattr(args, "resume", None) or args.profile):
         raise ConfigError("Presets apply to new default scans; do not combine with --config, --resume or --profile")
@@ -120,7 +136,24 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
     choices = {name: getattr(args, name, None) for name in ("tools", "profile", "enrich", "modules", "mode")}
     if not args.resume or args.config is not None or any(value is not None for value in choices.values()):
         config = resolve_selection(config, **choices)
+    if god_mode:
+        from .presets import apply_god_mode
+        config = apply_god_mode(config, defaults=not args.config and not args.resume)
     data=config.model_dump()
+    for path in args.wordlist:
+        from .wordlists import load_dictionary
+        load_dictionary(path, config.discovery.max_entries)
+        data['discovery']['wordlists'].append(str(path.expanduser().absolute()))
+        data['discovery']['enabled'] = True
+    for flag, field in (("wordlist_budget", "request_budget"), ("max_wordlist_entries", "max_entries"), ("max_concurrent_jobs", "max_concurrent_jobs")):
+        value = getattr(args, flag, None)
+        if value is not None:
+            data['discovery'][field] = value
+    if args.command == 'rerun' and (getattr(args, 'mode', None) == 'offline' or 'http' not in data['modules']):
+        data['discovery']['enabled'] = False
+        data['discovery']['god_mode'] = False
+    if data['discovery']['enabled'] and (data['mode'] not in {'standard', 'demo'} or 'http' not in data['modules']):
+        raise ConfigError('Content discovery needs an explicitly selected HTTP capability in standard/demo mode')
     data["tools"].update(overrides(args.tool))
     if args.strict_tools is not None:
         data["strict_tools"]=args.strict_tools
@@ -191,7 +224,20 @@ def main(argv: list[str] | None = None) -> int:
             return main(["scan", "--resume", str(args.run)] + (["--no-progress"] if args.no_progress else []) + (["--break-lock"] if args.break_lock else []))
         if args.command == "setup":
             from .setup import setup
-            return setup(yes=args.yes, directory=args.directory, skip_tools=args.skip_tools, go=args.go, cc=args.cc)
+            return setup(yes=args.yes, directory=args.directory, skip_tools=args.skip_tools, go=args.go, cc=args.cc, with_seclists=args.with_seclists, seclists_path=args.seclists_path)
+        if args.command == "wordlists":
+            from .wordlists import locate, summary
+            if args.wordlist_command == "update":
+                if args.json:
+                    raise ConfigError("Use wordlists doctor --json separately from update")
+                from .setup import setup
+                return setup(yes=args.yes, skip_tools=True, with_seclists=True)
+            data=locate()
+            print(json.dumps(data,indent=2)) if args.json else summary(data)
+            if args.wordlist_command == "list" and not args.json:
+                for name, info in data['available'].items():
+                    print(f"{name}: {info['location']} | sha256 {info['sha256']}")
+            return 0 if data['installed'] else 2
         if args.command == "settings":
             from .settings import load_settings, save_settings
             settings = load_settings()
@@ -236,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             config=effective_config(args)
             from .settings import load_settings
             return run(config,args.target,args.output_root,args.resume,args.baseline,args.break_lock,
-                       no_progress=args.no_progress,preset=args.preset or ("YAML" if args.config else "saved run" if args.resume else load_settings().preset))
+                       no_progress=args.no_progress,preset=("GOD MODE" if config.discovery.god_mode else args.preset) or ("YAML" if args.config else "saved run" if args.resume else load_settings().preset))
         if args.command=="demo":
             config=default_config("example.com")
             config.mode="demo"

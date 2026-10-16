@@ -25,11 +25,12 @@ def health(overrides=None) -> dict:
             libraries[distribution] = {'version': importlib.metadata.version(distribution), 'available': importlib.util.find_spec(module) is not None}
         except importlib.metadata.PackageNotFoundError:
             libraries[distribution] = {'available': False, 'version': 'missing'}
+    from .wordlists import locate
     records = doctor(overrides)
     return {'version': __version__, 'python': platform.python_version(), 'platform': platform.system(), 'architecture': platform.machine(),
             'core': 'available' if sys.version_info >= (3, 12) and all(v['available'] for v in libraries.values()) else 'incomplete',
             'libraries': libraries, 'tools': {n: {**i.record(), 'status': execution_status(i)} for n, i in records.items()},
-            'optional_tools': 'ready' if all(i.compatible for i in records.values()) else 'partial'}
+            'optional_tools': 'ready' if all(i.compatible for i in records.values()) else 'partial', 'wordlists': locate()}
 
 
 def print_health(data):
@@ -42,13 +43,16 @@ def print_health(data):
         print(f"  {row['path'] or '(not found)'} | fallback: {fallback}")
         if not row['supported']:
             print('  ' + row['reason'])
+    from .wordlists import summary
+    summary(data.get("wordlists"))
     print(f"Overall: Core {data['core']}; optional tools {data['optional_tools']}. Native fallbacks retain scope and budgets.")
     print("Repair supported tools: reconmap doctor --fix --yes. Core packages: python tools/bootstrap.py")
 
 
-def setup(*, yes=False, directory=None, skip_tools=False, go=None, cc=None) -> int:
+def setup(*, yes=False, directory=None, skip_tools=False, go=None, cc=None, with_seclists=None, seclists_path=None) -> int:
     from .installer import install
     from .jsbuild import build
+    want_wordlists = with_seclists if with_seclists is not None else platform.system() == 'Linux' and not skip_tools
     if not skip_tools and not yes:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
             raise ConfigError('Setup downloads verified optional tools. Use --yes to consent in non-interactive mode, or --skip-tools for core health only')
@@ -58,6 +62,18 @@ def setup(*, yes=False, directory=None, skip_tools=False, go=None, cc=None) -> i
             return 3
         if consent not in {'y', 'yes'}:
             return 3
+    if want_wordlists and not yes:
+        from .wordlists import CATALOG, locate
+        if not locate()['installed']:
+            if not (sys.stdin.isatty() and sys.stdout.isatty()):
+                raise ConfigError('Optional SecLists download requires --yes or --skip-wordlists in non-interactive setup')
+            size = sum(s['bytes'] for s in CATALOG['files'].values())
+            try:
+                want_wordlists = input(f'Install optional pinned SecLists curated subset ({size:,} bytes, four lists plus license)? [y/N] ').strip().lower() in {'y','yes'}
+            except EOFError:
+                want_wordlists = False
+            if not want_wordlists:
+                print('SecLists download declined; core scanner remains available.')
     settings = load_settings()
     if directory:
         settings.tool_directory = str(Path(directory).expanduser().resolve())
@@ -91,6 +107,21 @@ def setup(*, yes=False, directory=None, skip_tools=False, go=None, cc=None) -> i
             from .security import redact
             failures.append(spec.name)
             print(f'{spec.name}: incomplete: {redact(str(exc))}; native fallback remains available where applicable')
+    from .wordlists import install, locate, verify
+    wordlists = locate()
+    try:
+        if seclists_path:
+            wordlists = verify(Path(seclists_path))
+            if not wordlists['installed']:
+                raise ConfigError('Selected SecLists path does not match the reviewed subset: ' + '; '.join(wordlists['errors'][:2]))
+            settings = load_settings(); settings.seclists_directory = wordlists['path']; save_settings(settings)
+        elif want_wordlists:
+            wordlists = install()
+        elif wordlists['installed']:
+            settings = load_settings(); settings.seclists_directory = wordlists['path']; save_settings(settings)
+    except (OSError, ValueError, TimeoutError) as exc:
+        failures.append('seclists')
+        print('SecLists optional setup incomplete: ' + str(exc))
     data = health()
     print_health(data)
     complete = data['core'] == 'available' and data['optional_tools'] == 'ready' and not failures
