@@ -9,7 +9,7 @@ Base: merged V3 main d6e6f5f. Brief: complete V3.1.0 CLI, installation and usabi
 - [x] Phase 4: real persisted-state progress, plain logs and interruption cleanup.
 - [x] Phase 5: optional menu, preferences and latest valid report access.
 - [x] Phase 6: regression tests, installation/workflow validation, concise README and release notes.
-- [ ] Commit/push review branch and record actual platform/tool verification.
+- [x] Commit/push review branch and record actual platform/tool verification.
 
 No schema/scoring migration or new reconnaissance engine is planned. Existing active executable policy blocks remain. Default scope stays exact-host; no implicit provider enrichment. Development uses offline/localhost only. Native Windows verification must be reported separately.
 
@@ -27,3 +27,5 @@ No schema/scoring migration or new reconnaissance engine is planned. Existing ac
 Output root: `/workspace/TheGodRecon/recon-output/v31-validation/`. See V3_1_RELEASE.md for exact artifacts and reproduction commands.
 
 GitHub API read was retried for this review workflow and returned Forbidden. Git transport remains the publication route; PR creation/Actions results must not be claimed from Git push alone. The ready-to-use PR description is docs/V3_1_PULL_REQUEST.md.
+
+Publication verified: implementation commit `3562912` and documentation commit `b5a43ea` are on `origin/feature/thegodrecon-v3.1` (remote SHA checked). Review URL: https://github.com/Theghost2004/TheGodRecon/pull/new/feature/thegodrecon-v3.1 . Main is unchanged pending review. GitHub API returned Forbidden, so no PR, release object or CI outcome is claimed. Cloud startup guidance was saved as an environment draft; snapshot publication/fresh-task restore remains unverified.
