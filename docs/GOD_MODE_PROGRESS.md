@@ -9,7 +9,7 @@ Base: merged 3.1.0 `d7ddd42`. Feature branch: `feature/god-mode-coverage`.
 - [x] Crawl/JS coverage fixes, stop diagnostics, bounded independent tool concurrency.
 - [x] Tool execution coverage, dashboard, HTML/JSON/CSV exports.
 - [x] Regression and controlled-localhost validation; concise documentation.
-- [ ] Commit, push and prepare reviewable PR.
+- [x] Commit/push feature branch and prepare reviewable PR description (API creation blocked; details below).
 
 No blanket policy exception was added. Direct active upstream tools remain blocked because a portable, enforceable containment implementation has not been verified. HTTP work uses the existing scheduler. Up to two passive/local tool tasks can run concurrently. SQLite schema 3 is unchanged; old configurations retain their digest. Scans never download dictionaries.
 
@@ -59,3 +59,11 @@ Modified configuration/CLI/setup: `cli.py`, `commands_v2.py`, `config.py`, `pres
 Modified collection and processing: `engine.py`, `analysis.py`, `integrations.py`, `orchestrator.py`, `tool_registry.py`, `reruns.py`, `enrichment/prioritization.py`.
 
 Modified presentation: `progress.py`, `reporting.py`. Tests: three `test_god_*.py` suites, a preserved V3.1 config fixture, focused updates in `test_v31_setup.py` and `test_adapters.py`. Verification: `tools/verify_local_workflow.py`, `tools/check_report_browser.cjs`, `.github/workflows/test.yml`. Documentation: README, architecture link, God Mode guide/checklist/PR description, and two review screenshots.
+
+## Publication
+
+Implementation commit `8f93d92a41aa8d1c2dd96d15ba0b813ffb952773` was pushed to `origin/feature/god-mode-coverage`; the remote SHA was verified. Source, tests, documentation and screenshots are available on that review branch. Main requires normal review/merge.
+
+Creating the draft pull request with `gh pr create` failed with `Post "https://api.github.com/graphql": Forbidden`. This is a GitHub API access failure, not an automatic approval-review rejection. No PR creation or CI result is claimed. The complete ready-to-use description is [GOD_MODE_PULL_REQUEST.md](GOD_MODE_PULL_REQUEST.md).
+
+Open the review: https://github.com/Theghost2004/TheGodRecon/pull/new/feature/god-mode-coverage .
