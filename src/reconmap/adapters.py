@@ -56,7 +56,8 @@ def creation_options() -> dict:
 
 
 def identify(name: str, override: str | None = None) -> ToolInfo:
-    path = shutil.which(override or name)
+    from .settings import discover
+    path = shutil.which(discover(name, override))
     if path is None:
         return ToolInfo(name, None, "unavailable", None, False, False, CAPABILITIES[name], "Install a verified user-local binary; see docs/TOOLS.md")
     path = str(Path(path).resolve())
@@ -65,6 +66,11 @@ def identify(name: str, override: str | None = None) -> ToolInfo:
     try:
         with Path(path).open("rb") as binary:
             sha = hashlib.file_digest(binary, "sha256").hexdigest()
+        if name == "jsluice" and sha not in REVIEWED_JSLUICE_HASHES:
+            from .jsbuild import trusted_build
+            if not trusted_build(Path(path), sha):
+                return ToolInfo(name, path, "unverified build", sha, True, False, CAPABILITIES[name],
+                    "Unreviewed jsluice fingerprint; run reconmap setup for a verified source build. Native Tree-sitter available")
         # Use the same bounded process handling as scan adapters. Invalid binaries,
         # excessive help output and timeouts become a dependency diagnostic.
         with tempfile.TemporaryDirectory(prefix="reconmap-doctor-") as temporary:
@@ -73,7 +79,7 @@ def identify(name: str, override: str | None = None) -> ToolInfo:
         text = result.stdout + result.stderr
         if name == "jsluice":
             version = "unversioned; executable sha256 identity"
-            verified = "jsluice - Extract URLs" in text and sha in REVIEWED_JSLUICE_HASHES
+            verified = "jsluice - Extract URLs" in text  # fingerprint checked before any execution
         else:
             match = re.search(r"\bv?(\d+\.\d+\.\d+)\b", text)
             version = match[1] if match else "unrecognized"
@@ -117,7 +123,7 @@ class ToolOutputLimit(ValueError):
         self.result = result
 
 
-async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 1024 * 1024, expected_sha: str | None = None, output_files: tuple[Path, ...] = ()) -> ProcessResult:
+async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 1024 * 1024, expected_sha: str | None = None, output_files: tuple[Path, ...] = (), env_updates: dict | None = None) -> ProcessResult:
     if expected_sha is not None:
         with Path(argv[0]).open('rb') as binary:
             if hashlib.file_digest(binary, 'sha256').hexdigest() != expected_sha:
@@ -127,6 +133,7 @@ async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 
     home = cwd / "home"
     home.mkdir(exist_ok=True)
     env.update({"HOME": str(home), "USERPROFILE": str(home), "APPDATA": str(home), "LOCALAPPDATA": str(home), "XDG_CONFIG_HOME": str(home), "XDG_CACHE_HOME": str(home), "XDG_STATE_HOME": str(home), "TMPDIR": str(cwd), "TEMP": str(cwd), "TMP": str(cwd)})
+    env.update(env_updates or {})
     options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     proc = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **options)
 

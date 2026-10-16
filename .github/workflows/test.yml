@@ -19,6 +19,12 @@ jobs:
         run: |
           python -m pip install --require-hashes -r requirements.lock
           python -m pip install --no-deps -e .
+      - name: Bootstrap core in project virtual environment
+        shell: python
+        run: |
+          import subprocess, sys
+          result = subprocess.run([sys.executable, "tools/bootstrap.py", "--skip-tools"])
+          assert result.returncode in (0, 2), result.returncode
       - name: Verified native Gitleaks and passive-tool version checks
         run: python tools/install_tools.py --tool gitleaks --tool subfinder --tool urlfinder
       - name: Core and real offline integration tests
@@ -28,9 +34,13 @@ jobs:
       - name: CLI smoke and deterministic offline demonstration
         run: |
           reconmap --version
+          reconmap plan example.com --quick --json
+          reconmap plan example.com --all-tool --json
+          reconmap settings --set progress false
+          reconmap doctor --json
           reconmap doctor --tool gitleaks=.tools/bin/gitleaks${{ runner.os == 'Windows' && '.exe' || '' }} --tool subfinder=.tools/bin/subfinder${{ runner.os == 'Windows' && '.exe' || '' }} --tool urlfinder=.tools/bin/urlfinder${{ runner.os == 'Windows' && '.exe' || '' }}
           reconmap demo --output-root demo-output
-          reconmap scan --resume demo-output/example.com
+          reconmap resume demo-output/example.com --no-progress
           reconmap report --run demo-output/example.com
           reconmap tools list
           reconmap plan --target example.com --config examples/scope.yaml --tools all --enrich all --json

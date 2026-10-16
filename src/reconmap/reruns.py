@@ -198,9 +198,9 @@ def rerun(args):
     parent = args.parent.absolute()
     parent_manifest = read_manifest(parent)
     parent = parent.resolve()
-    if args.target and args.target != parent_manifest["target"]:
+    if (args.target or args.target_pos) and (args.target or args.target_pos) != parent_manifest["target"]:
         raise ConfigError("Rerun keeps the parent seed; use scan for a different target")
-    if args.tools is None and args.modules is None and args.profile is None:
+    if args.tools is None and args.modules is None and args.profile is None and not args.all_tool:
         raise ConfigError("Rerun requires --tools, --modules or --profile; for local reanalysis use --tools offline")
     # Reuse the explicit saved authorization, unless a current YAML is supplied.
     args.resume = parent
@@ -221,4 +221,4 @@ def rerun(args):
     parent_manifest, artifacts = verify_parent(parent, config)
     def initialize(child, manifest):
         reuse_evidence(parent, child, manifest, config, artifacts)
-    return run(config, parent_manifest["target"], args.output_root or parent.parent, baseline=args.baseline or parent, initialize=initialize)
+    return run(config, parent_manifest["target"], args.output_root or parent.parent, baseline=args.baseline or parent, initialize=initialize, no_progress=args.no_progress)
