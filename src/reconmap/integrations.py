@@ -1,137 +1,246 @@
-"""Reviewed passive and offline adapters under the shared orchestration policy."""
+"""Primary-first adapters, durable input checkpoints and policy-bound fallbacks."""
 import asyncio
 import hashlib
 import json
 import os
 import re
+import time
 from pathlib import Path
 from urllib.parse import urljoin
 
-from .adapters import capture, command, execute, parse_records
-from .analysis import js_strings
+from .adapters import capture, command, execute, parse_records, ProcessResult
+from .analysis import analyze_js, analyze_map, js_strings, secrets, source_maps
 from .security import redact, redact_data
-from .tool_registry import BY_NAME, execution_status
+from .storage import artifact_path
+from .tool_registry import execution_status
+from .orchestrator import fallback_allowed, record_execution, NATIVE_ENGINES
 
-async def collect_passive(self) -> None:
+
+async def invoke(scanner, info, cwd, input_path=None):
+    scanner.scheduler.check_time()
+    scanner.check_disk_budget(scanner.config.budgets.response_bytes * 2)
+    argv = command(info, scanner.manifest["host"], cwd, scanner.config.budgets.provider_seconds,
+                   input_path, sources=scanner.config.provider_sources.get(info.name))
+    if info.name in {"subfinder", "urlfinder"}:
+        provider_file = os.environ.get("RECONMAP_" + info.name.upper() + "_PROVIDER_CONFIG")
+        if provider_file:
+            argv.extend(["-pc", str(Path(provider_file).absolute())])
+    try:
+        result = await execute(argv, cwd, min(scanner.config.budgets.provider_seconds, scanner.scheduler.remaining()),
+                               limit=scanner.config.budgets.response_bytes, expected_sha=info.sha256,
+                               output_files=(cwd / "findings.json",) if info.name == "gitleaks" else ())
+        error = ""
+    except asyncio.CancelledError as exc:
+        if hasattr(exc, "result"):
+            capture(exc.result, cwd)
+        raise
+    except (TimeoutError, ValueError) as exc:
+        if not hasattr(exc, "result"):
+            raise
+        result, error = exc.result, str(exc)
+    capture(result, cwd)
+    return result, error
+
+
+def invocation_directory(scanner, name, suffix=""):
+    number = int(scanner.store.meta("invocations:" + name, 0)) + 1
+    scanner.store.set_meta("invocations:" + name, number)
+    directory = scanner.run / "raw" / name / (f"{number:04d}" + ("_" + suffix if suffix else ""))
+    directory.mkdir(parents=True)
+    return directory
+
+
+async def collect_passive(scanner):
     for name in ("subfinder", "urlfinder"):
-        if name not in self.config.modules:
+        if name not in scanner.config.modules:
             continue
-        previous = self.store.conn.execute("SELECT state FROM stages WHERE name=?", (name,)).fetchone()
+        previous = scanner.store.conn.execute("SELECT state FROM stages WHERE name=?", (name,)).fetchone()
         if previous and previous[0] == "completed":
             continue
-        info = self.tools[name]
-        if self.config.mode in {"demo", "offline"} or self.config.scope.lab:
-            self.store.stage(name, "skipped", "Demo/offline/loopback lab does not contact discovery providers")
+        info = scanner.tools[name]
+        if scanner.config.mode in {"demo", "offline"} or scanner.config.scope.lab:
+            reason = "Demo/offline/loopback lab does not contact discovery providers"
+            scanner.store.stage(name, "skipped", reason)
+            record_execution(scanner, name, state="skipped", reason=reason)
             continue
+        limitation = "No native subdomain enumerator; seed/reference inventory only" if name == "subfinder" else "CDX fallback requires explicit Wayback enrichment; historical records are not live evidence"
         if not info.supported:
-            self.store.stage(name, execution_status(info), info.reason)
+            scanner.store.stage(name, execution_status(info), info.reason)
+            record_execution(scanner, name, state=execution_status(info), reason=info.reason, limitations=[limitation])
             continue
-        cwd = self.run / "raw" / name
-        cwd.mkdir(exist_ok=True)
+        started = time.monotonic()
+        cwd = None
+        count = 0
+        state, detail = "failed", ""
         try:
-            if not self.policy.host_allowed(self.manifest["host"]):
+            if not scanner.policy.host_allowed(scanner.manifest["host"]):
                 raise ValueError("Passive seed hostname is outside scope")
-            self.store.stage(name, "running", "Reviewed provider allowlist; native scheduling validates every returned candidate")
-            invocation = int(self.store.meta("invocations:" + name, 0)) + 1
-            self.store.set_meta("invocations:" + name, invocation)
-            cwd = cwd / f"{invocation:04d}"
-            cwd.mkdir()
-            self.scheduler.check_time()
-            argv = command(info, self.manifest["host"], cwd, self.config.budgets.provider_seconds, sources=self.config.provider_sources.get(name))
-            provider_file = os.environ.get("RECONMAP_" + name.upper() + "_PROVIDER_CONFIG")
-            if provider_file:
-                argv.extend(["-pc", str(Path(provider_file).absolute())])
-            self.check_disk_budget(self.config.budgets.response_bytes*2)
-            result = await execute(argv, cwd, min(self.config.budgets.provider_seconds, self.scheduler.remaining()), limit=min(self.config.budgets.response_bytes, self.config.budgets.artifact_bytes))
-            capture(result, cwd)
+            scanner.store.stage(name, "running", "Reviewed providers; all returned candidates re-enter scope policy")
+            record_execution(scanner, name, engine=name, state="running")
+            cwd = invocation_directory(scanner, name)
+            result, error = await invoke(scanner, info, cwd)
             records, errors = parse_records(name, result.stdout)
-            if result.code != 0:
-                state, detail = "failed", f"Execution exit {result.code}; any valid partial records retained"
-            elif errors or re.search(r"(?i)\b(error|failed|timeout|denied|forbidden)\b",result.stderr):
-                state, detail = "partial", "; ".join(errors[:20]) or "Provider reported errors; see redacted raw stderr"
-            else:
-                state, detail = "completed", f"{len(records)} parsed records; provider network requests are not measured"
-            if len(records) > self.config.budgets.provider_results:
-                self.limit("provider result cap reached")
-            for record in records[:self.config.budgets.provider_results]:
+            state = "failed" if result.code != 0 or error else "partial" if errors or re.search(r"(?i)\b(error|failed|timeout|denied|forbidden)\b", result.stderr) else "completed"
+            detail = error or "; ".join(errors[:20]) or (f"Exit {result.code}; valid partial records retained" if result.code else "Provider requests are not measured")
+            if len(records) > scanner.config.budgets.provider_results:
+                scanner.limit("provider result cap reached")
+                state = "partial"
+            for record in records[:scanner.config.budgets.provider_results]:
                 candidate = record["host"] if name == "subfinder" else record["url"]
-                self.store.observed(candidate, "provider", redact_data(record), name, identity=hashlib.sha256(f"{name}:{record}".encode()).hexdigest())
+                scanner.store.observed(candidate, "provider", redact_data(record), name,
+                    identity=hashlib.sha256(f"{name}:{record}".encode()).hexdigest())
                 if name == "subfinder":
                     candidate = "https://" + candidate
-                self.add_url(candidate, name)
-            self.store.stage(name, state, detail)
+                else:
+                    scanner.store.observed(candidate, "historical-discovery", {"current_liveness": "untested", "artifact": str(cwd.relative_to(scanner.run))}, name,
+                                           identity="urlfinder-history:" + hashlib.sha256(candidate.encode()).hexdigest())
+                scanner.add_url(candidate, name)
+                count += 1
         except (OSError, ValueError, TimeoutError) as exc:
-            self.store.stage(name, "failed", str(exc))
+            detail = redact(str(exc))
+        finally:
+            # Cancellation escapes; a running primary is finalized as interrupted by the engine.
+            if not asyncio.current_task().cancelling():
+                scanner.store.stage(name, state, detail)
+                record_execution(scanner, name, engine=name, state=state, reason=detail, count=count,
+                    seconds=time.monotonic()-started, outputs=[str(cwd.relative_to(scanner.run))] if cwd else [],
+                    accounting={"target_requests": 0, "provider_requests": None},
+                    limitations=[limitation] if state != "completed" else [])
 
 
-async def local_tools(self) -> None:
-    for name in ("jsluice", "gitleaks"):
-        if name not in self.config.modules:
+def artifact_bases(scanner, artifact):
+    return sorted({r[0] for r in scanner.store.conn.execute(
+        "SELECT parent FROM relationships WHERE child=? AND kind='response_body'", ("artifact:" + artifact["hash"],))
+        if r[0].startswith(("http://", "https://"))}) or [scanner.manifest["target"]]
+
+
+def emit_js(scanner, artifact, text, records, bases, capture_ref):
+    # Method/option analysis is a safety veto, not a second discovery engine.
+    routes, unresolved, _ = js_strings(text)
+    denied = {r["value"]: r["method"] for r in routes if r["method"] not in {None, "GET"}}
+    for expression in unresolved:
+        scanner.store.observed("artifact:" + artifact["hash"], "unresolved_expression", {"expression": expression, "hash": artifact["hash"]}, "js-safety",
+                               identity=hashlib.sha256(f"{artifact['hash']}:{expression}".encode()).hexdigest())
+    for record in records:
+        scanner.store.observed("artifact:" + artifact["hash"], "jsluice-endpoint", redact_data(record), "jsluice",
+                               identity=hashlib.sha256(f"jsluice:{artifact['hash']}:{record}".encode()).hexdigest())
+        if "EXPR" in record["url"] or "${" in record["url"]:
             continue
-        info = self.tools[name]
-        if not info.supported:
-            self.store.stage(name, execution_status(info), info.reason)
-            continue
-        cwd = self.run / "raw" / name
-        cwd.mkdir(exist_ok=True)
-        artifacts = self.store.rows("artifacts")
-        if not artifacts or (name == "jsluice" and not any(a["kind"] == "js" for a in artifacts)):
-            self.store.stage(name, "skipped", "No suitable local artifacts; provide local_inputs or a captured parent run")
-            continue
-        identity = info.sha256 + ":" + ":".join(sorted(a["hash"] for a in artifacts))
-        if self.store.meta("adapter:" + name) == identity:
-            continue
-        files = [self.run / "assets"] if name == "gitleaks" else [self.run / a["path"] for a in artifacts if a["kind"] == "js"]
-        state = "completed"
-        details = []
-        for path in files:
+        method = record.get("method", "").upper() or "UNKNOWN"
+        method_restricted = record["url"] in denied
+        for base in bases:
             try:
-                artifact_key = f"jsluice-artifact:{info.sha256}:{path.stem}"
-                if name == "jsluice" and self.store.meta(artifact_key):
-                    continue
-                self.store.stage(name, "running", "Local captured artifacts only")
-                self.scheduler.check_time()
-                self.check_disk_budget(self.config.budgets.response_bytes*2)
-                invocation = int(self.store.meta("invocations:" + name, 0)) + 1
-                self.store.set_meta("invocations:" + name, invocation)
-                input_key = path.stem if name == "jsluice" else hashlib.sha256(identity.encode()).hexdigest()
-                capture_dir = cwd / f"{invocation:04d}_{input_key}"
-                capture_dir.mkdir()
-                result = await execute(command(info, self.manifest["host"], capture_dir, self.config.budgets.provider_seconds, path), capture_dir, min(self.config.budgets.provider_seconds, self.scheduler.remaining()), limit=self.config.budgets.response_bytes)
-                capture(result, capture_dir)
-                if result.code not in ({0,10} if name == "gitleaks" else {0}):
-                    raise ValueError(f"Execution exit {result.code}; findings exit for Gitleaks is 10")
-                if name == "gitleaks" and (capture_dir / "findings.json").stat().st_size > self.config.budgets.response_bytes:
-                    raise ValueError("Gitleaks findings report exceeds tool output cap")
-                text = (capture_dir / "findings.json").read_text(encoding="utf-8") if name == "gitleaks" else result.stdout
-                records, errors = parse_records(name, text)
-                if errors:
-                    state = "partial"
-                    details.extend(errors)
-                non_get_urls = {r.get("url") for r in records if r.get("method", "").upper() not in {"", "GET"}}
-                if name == "jsluice":
-                    # jsluice labels dynamic fetch options GET. The stricter
-                    # native parser must veto those before any scheduling,
-                    # including when the analysis module is disabled.
-                    routes, _, _ = js_strings(path.read_text(encoding="utf-8", errors="replace"))
-                    non_get_urls.update(r["value"] for r in routes if r["method"] not in {None, "GET"})
-                for record in records:
-                    if name == "gitleaks":
-                        source_file = Path(record.get("File", ""))
-                        match = next((a for a in artifacts if source_file.name == Path(a["path"]).name), None)
-                        synthetic = self.config.mode == "demo" or self.manifest.get("synthetic", False)
-                        self.store.finding("gitleaks:" + record["RuleID"], "artifact:" + (match["hash"] if match else hashlib.sha256(str(source_file).encode()).hexdigest()), "Potential secret material (offline Gitleaks)", {"hash": match["hash"] if match else None, "line": record.get("StartLine"), "excerpt": "[REDACTED]", "synthetic": synthetic, "next_check": "Review context locally; credential validity is untested"}, priority=5 if synthetic else 80, source="gitleaks")
-                    else:
-                        self.store.observed("artifact:" + path.stem, "jsluice-endpoint", redact_data(record), "jsluice", identity=hashlib.sha256(f"jsluice:{path.stem}:{record}".encode()).hexdigest())
-                        if "EXPR" not in record["url"] and "${" not in record["url"]:
-                            bases = [r[0] for r in self.store.conn.execute("SELECT parent FROM relationships WHERE child=? AND kind='response_body'", ("artifact:" + path.stem,)) if r[0].startswith(("http://","https://"))] or [self.manifest["target"]]
-                            for base in bases:
-                                self.add_url(urljoin(base, record["url"]), "jsluice", "artifact:" + path.stem, fetch=record["url"] not in non_get_urls)
-                if name == "jsluice" and not errors:
-                    self.store.set_meta(artifact_key, True)
-            except (OSError, ValueError, TimeoutError) as exc:
-                state = "failed"
-                details.append(str(exc))
-        self.store.stage(name, state, "; ".join(details[:20]) or "Offline local artifacts processed")
-        if state == "completed":
-            self.store.set_meta("adapter:" + name, identity)
+                url = urljoin(base, record["url"])
+                scanner.store.observed(url, "inferred_endpoint", {**redact_data(record), "method": method, "hash": artifact["hash"], "artifact": capture_ref,
+                    "state": "inferred from code; never confirms execution"}, "jsluice",
+                    identity=hashlib.sha256(f"{base}:{artifact['hash']}:{record}".encode()).hexdigest())
+                scanner.add_url(url, "jsluice", "artifact:" + artifact["hash"], fetch=method == "GET" and not method_restricted)
+                for location, key in (("query", "queryParams"), ("body-inferred", "bodyParams")):
+                    for param in record.get(key, []) if isinstance(record.get(key, []), list) else []:
+                        if isinstance(param, str):
+                            scanner.store.execute("INSERT OR IGNORE INTO parameters VALUES(?,?,?,?)", (url, param, location, "jsluice"))
+            except ValueError as exc:
+                scanner.store.observed(base, "invalid_reference", {"reason": str(exc)}, "jsluice")
+    for base in bases:
+        for candidate, provenance in source_maps(scanner.store, text, base):
+            scanner.add_url(candidate, provenance, "artifact:" + artifact["hash"])
+
+
+def native_artifact(scanner, name, artifact, text, bases):
+    synthetic = scanner.config.mode == "demo" or scanner.manifest.get("synthetic", False)
+    if name == "gitleaks":
+        secrets(scanner.store, text, artifact["hash"], "native-fallback", synthetic)
+        return
+    for base in bases:
+        refs = analyze_map(scanner.store, text, base, artifact["hash"], scanner.config.budgets.response_bytes, synthetic, scan_secrets=False) if artifact["kind"] == "map" else analyze_js(scanner.store, text, base, artifact["hash"], synthetic, scan_secrets=False)
+        for candidate, provenance in refs:
+            scanner.add_url(candidate, provenance, "artifact:" + artifact["hash"], fetch=provenance != "inferred_endpoint_non_get")
+
+
+async def local_tools(scanner):
+    for name in ("jsluice", "gitleaks"):
+        if name not in scanner.config.modules:
+            continue
+        info = scanner.tools[name]
+        artifacts = [a for a in scanner.store.rows("artifacts") if name == "gitleaks" or a["kind"] in {"js", "map"}]
+        if not artifacts:
+            scanner.store.stage(name, "skipped", "No suitable local artifacts")
+            record_execution(scanner, name, state="skipped", reason="No suitable local artifacts")
+            continue
+        states, details = [], []
+        for artifact in artifacts:
+            scanner.scheduler.check_time()
+            path = artifact_path(scanner.run, artifact["path"])
+            with path.open('rb') as stream:
+                body = stream.read(scanner.config.budgets.response_bytes + 1)
+            if len(body) > scanner.config.budgets.response_bytes or hashlib.sha256(body).hexdigest() != artifact["hash"]:
+                raise ValueError("Artifact size/hash verification failed before analysis")
+            text = body.decode(errors="replace")
+            bases = artifact_bases(scanner, artifact)
+            key = f"v3-primary:{name}:{info.sha256}:{artifact['hash']}"
+            work = scanner.store.meta(key)
+            if work is None:
+                started = time.monotonic()
+                cwd = None
+                records = []
+                state, detail = execution_status(info), info.reason
+                supplementary = name == "jsluice" and artifact["kind"] == "map"
+                if supplementary:
+                    state, detail = "skipped", "Embedded source maps require native parsing; jsluice accepts JavaScript"
+                elif info.supported:
+                    try:
+                        scanner.store.stage(name, "running", "Local captured artifact only")
+                        record_execution(scanner, name, engine=name, state="running", inputs=[artifact["path"]])
+                        cwd = invocation_directory(scanner, name, artifact["hash"])
+                        result, error = await invoke(scanner, info, cwd, path)
+                        output = result.stdout
+                        if name == "gitleaks":
+                            report = cwd / "findings.json"
+                            if report.exists():
+                                with report.open('rb') as stream:
+                                    content = stream.read(scanner.config.budgets.response_bytes + 1)
+                                if len(content) > scanner.config.budgets.response_bytes:
+                                    raise ValueError("Gitleaks report exceeds output cap")
+                                output = content.decode(errors="replace")
+                            else:
+                                output, error = "[]", error or "Gitleaks report missing"
+                        records, errors = parse_records(name, output)
+                        state = "failed" if error or result.code not in ({0, 10} if name == "gitleaks" else {0}) else "partial" if errors else "completed"
+                        detail = error or "; ".join(errors[:20]) or (f"Exit {result.code}; valid records retained" if state == "failed" else "Local artifact processed")
+                    except (asyncio.CancelledError, KeyboardInterrupt):
+                        record_execution(scanner, name, engine=name, state="interrupted", reason="Tool cancelled; bounded raw prefix retained where available", seconds=time.monotonic()-started,
+                            inputs=[artifact["path"]], outputs=[str(cwd.relative_to(scanner.run))] if cwd else [])
+                        raise
+                    except (OSError, ValueError, TimeoutError) as exc:
+                        state, detail = "failed", redact(str(exc))
+                work = {"state": state, "detail": detail, "records": records, "capture": str(cwd.relative_to(scanner.run)) if cwd else "", "supplementary": supplementary}
+                # Save parsed partial output before fallback; interrupted fallback does not restart primary.
+                scanner.store.set_meta(key, work)
+                if not supplementary:
+                    record_execution(scanner, name, engine=name if cwd else None, state=state, reason=detail,
+                        inputs=[artifact["path"]], outputs=[work["capture"]] if cwd else [], count=len(records),
+                        seconds=time.monotonic()-started, accounting={"target_requests": 0, "provider_requests": 0},
+                        limitations=[detail] if state not in {"completed", "skipped"} else [])
+            states.append(work["state"])
+            details.append(work["detail"])
+            context_key = key + ":handled:" + hashlib.sha256(json.dumps(bases if name == "jsluice" else []).encode()).hexdigest()
+            if scanner.store.meta(context_key):
+                continue
+            if name == "jsluice" and artifact["kind"] == "js":
+                emit_js(scanner, artifact, text, work["records"], bases, work["capture"])
+            elif name == "gitleaks":
+                for record in work["records"]:
+                    synthetic = scanner.config.mode == "demo" or scanner.manifest.get("synthetic", False)
+                    scanner.store.finding("gitleaks:" + record["RuleID"], "artifact:" + artifact["hash"], "Potential secret material (offline Gitleaks)",
+                        {"hash": artifact["hash"], "line": record.get("StartLine"), "excerpt": "[REDACTED]", "synthetic": synthetic, "artifact": work["capture"], "next_check": "Review context locally; credential validity is untested"}, priority=5 if synthetic else 80, source="gitleaks")
+            if work["state"] != "completed" and fallback_allowed(scanner, name):
+                started = time.monotonic()
+                before = scanner.store.conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] + scanner.store.conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
+                native_artifact(scanner, name, artifact, text, bases)
+                count = scanner.store.conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] + scanner.store.conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0] - before
+                record_execution(scanner, name, engine=NATIVE_ENGINES[name], fallback=not work["supplementary"], count=count,
+                    inputs=[artifact["path"]], seconds=time.monotonic()-started, accounting={"target_requests": 0, "provider_requests": 0},
+                    limitations=[] if work["supplementary"] else ["Native fallback has narrower coverage than the selected tool"])
+            scanner.store.set_meta(context_key, True)
+        state = next((s for s in ("failed", "partial", "incompatible", "unavailable", "blocked-by-policy") if s in states), "completed")
+        scanner.store.stage(name, state, "; ".join(dict.fromkeys(details))[:4000])

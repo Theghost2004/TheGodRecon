@@ -6,7 +6,7 @@ from collections import Counter
 from urllib.parse import parse_qsl, urlsplit
 
 
-def signature(url, settings, method="UNKNOWN"):
+def signature(url, settings, method="UNKNOWN", context="unauthenticated"):
     parsed = urlsplit(url)
     segments = parsed.path.split("/")
     for index, segment in enumerate(segments):
@@ -19,11 +19,24 @@ def signature(url, settings, method="UNKNOWN"):
     # fragments, explicit ports, path case and encoding remain in exact URLs.
     names = sorted(Counter(k for k, _ in parse_qsl(parsed.query, keep_blank_values=True)).items())
     query = names if settings.query_names else parsed.query
-    data = [parsed.scheme, parsed.netloc, family, query, method]
+    data = [parsed.scheme, parsed.netloc, family, query, method, context]
     return json.dumps(data, ensure_ascii=True), family, names
 
 
 def group_urls(store, settings):
+    normalized = [json.loads(row["data"]) for row in store.rows("normalized_records")]
+    if normalized:
+        with store.conn:
+            store.conn.execute("DELETE FROM url_group_members")
+            store.conn.execute("DELETE FROM url_groups")
+            for row in normalized:
+                key, family, names = signature(row["url"], settings, row["method"], row["authorization_context"])
+                group_id = hashlib.sha256(key.encode()).hexdigest()
+                store.conn.execute("INSERT OR IGNORE INTO url_groups VALUES(?,?,?,?,?,?)", (group_id, key, family, json.dumps(names), row["method"], 2))
+                for source in row["sources"]:
+                    store.conn.execute("INSERT OR IGNORE INTO url_group_members VALUES(?,?,?)", (group_id, row["url"], source))
+        store.stage("dedup", "completed", "Request methods/contexts and exact inventory preserved; route/parameter families are analytical only")
+        return
     methods = {}
     sources = {}
     for row in store.rows("observations"):

@@ -1,5 +1,8 @@
 """Dependency ordering, pure plan preview, and shared native execution."""
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+import json
+import time
+from contextlib import contextmanager
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import aiohttp
@@ -7,6 +10,113 @@ import aiohttp
 from .config import ConfigError, normalize_url
 from .scope import ScopePolicy
 from .tool_registry import BY_NAME, REGISTRY, execution_status
+
+
+STAGE_NAMES = {"subfinder": "subdomain-discovery", "urlfinder": "historical-discovery",
+               "dnsx": "dns-enumeration", "httpx": "http-probing", "katana": "web-crawling",
+               "jsluice": "javascript-analysis", "gitleaks": "secret-detection", "nuclei": "exposure-checks"}
+NATIVE_ENGINES = {"dnsx": "native-dns", "httpx": "native-aiohttp", "katana": "native-html",
+                  "nuclei": "native-reviewed-checks", "jsluice": "native-tree-sitter", "gitleaks": "native-secret-patterns"}
+
+
+@dataclass
+class StageResult:
+    stage: str
+    selected_primary_tool: str | None
+    tool_identity: dict = field(default_factory=dict)
+    actual_execution_engines: list[str] = field(default_factory=list)
+    status: str = "pending"
+    primary_status: str = "not-selected"
+    failure_reason: str = ""
+    input_artifacts: list[str] = field(default_factory=list)
+    output_artifacts: list[str] = field(default_factory=list)
+    request_accounting: dict = field(default_factory=dict)
+    discovered_records: int = 0
+    fallback_used: bool = False
+    coverage_limitations: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+    duration_seconds: float = 0.0
+    started: str | None = None
+    finished: str | None = None
+
+
+def record_execution(scanner, name, *, engine=None, state="completed", reason="", fallback=False,
+                     inputs=(), outputs=(), count=0, seconds=0.0, accounting=None, limitations=()):
+    """One durable result per capability; repeated waves accumulate actual work."""
+    from .storage import timestamp
+    from .security import redact
+    stage = STAGE_NAMES.get(name, name)
+    row = scanner.store.conn.execute("SELECT result_json FROM stage_results WHERE name=?", (stage,)).fetchone()
+    selected = name if name in selected_names(scanner.config) else None
+    result = StageResult(**json.loads(row[0])) if row else StageResult(stage, selected,
+                         scanner.tools[name].record() if selected else {})
+    if engine and engine not in result.actual_execution_engines:
+        result.actual_execution_engines.append(engine)
+    result.fallback_used |= fallback and engine is not None
+    if engine == name or (engine is None and selected):
+        if result.primary_status in {"failed", "partial", "unavailable", "incompatible", "blocked-by-policy"} and state in {"completed", "running"}:
+            pass  # another successful input does not erase failed primary coverage
+        else:
+            result.primary_status = state
+    if state == "completed" and not result.errors and not result.coverage_limitations:
+        result.failure_reason = ""
+    if reason and state not in {"completed", "running"}:
+        result.failure_reason = redact(reason)
+        if state in {"failed", "partial", "interrupted"} and redact(reason) not in result.errors:
+            result.errors.append(redact(reason))
+    for target, values in ((result.input_artifacts, inputs), (result.output_artifacts, outputs),
+                           (result.coverage_limitations, limitations)):
+        target[:] = sorted(set(target) | {str(v) for v in values})
+    result.discovered_records += count
+    result.duration_seconds = round(result.duration_seconds + seconds, 6)
+    result.request_accounting.update(accounting or {})
+    result.status = state
+    if state == "completed" and (result.coverage_limitations or result.primary_status in {"unavailable", "incompatible", "blocked-by-policy", "failed", "partial"}):
+        result.status = "partial"
+    if engine and result.started is None:
+        result.started = timestamp()
+    result.finished = None if state == "running" else timestamp()
+    scanner.store.execute("INSERT OR REPLACE INTO stage_results VALUES(?,?)", (stage, json.dumps(asdict(result))))
+
+
+def fallback_allowed(scanner, name):
+    """A missing containment capability is distinct from denied target actions."""
+    scanner.scheduler.check_time()
+    scanner.check_disk_budget()
+    if BY_NAME[name].risk == "active":
+        return scanner.config.mode not in {"offline", "passive"} and scanner.policy.decision(scanner.manifest["target"])[0]
+    return True
+
+
+@contextmanager
+def native_execution(scanner, names, accounting_group):
+    started = time.monotonic()
+    for name in names:
+        record_execution(scanner, name, engine=NATIVE_ENGINES[name], state="running")
+    counts = {"dnsx": len(scanner.store.rows("dns")), "httpx": sum(r["kind"] == "http" for r in scanner.store.rows("observations")),
+              "katana": len(scanner.store.rows("urls")), "jsluice": sum(r["kind"] == "inferred_endpoint" for r in scanner.store.rows("observations")),
+              "gitleaks": len(scanner.store.rows("findings")), "nuclei": len(scanner.store.rows("findings"))}
+    state, reason = "completed", ""
+    try:
+        yield
+    except BaseException as exc:
+        state, reason = "partial", type(exc).__name__ + ": " + str(exc)
+        raise
+    finally:
+        for name in names:
+            selected = name in selected_names(scanner.config)
+            component = {"dnsx": "dns", "httpx": "http", "katana": "crawl", "nuclei": "checks", "jsluice": "analysis", "gitleaks": "analysis"}[name]
+            prior = scanner.store.conn.execute("SELECT state,detail FROM stages WHERE name=?", (component,)).fetchone()
+            effective_state = "partial" if scanner.limits or (prior and prior[0] in {"failed", "partial"}) else state
+            new_count = len(scanner.store.rows("dns")) if name == "dnsx" else len(scanner.store.rows("urls")) if name == "katana" else sum(r["kind"] == ("http" if name == "httpx" else "inferred_endpoint") for r in scanner.store.rows("observations")) if name in {"httpx", "jsluice"} else len(scanner.store.rows("findings"))
+            record_execution(scanner, name, engine=NATIVE_ENGINES[name], state=effective_state, reason=reason or (prior[1] if prior and prior[0] in {"failed", "partial"} else ""), fallback=selected,
+                count=max(0, new_count-counts[name]),
+                seconds=time.monotonic()-started,
+                inputs=["recon.sqlite:artifacts" if name in {"jsluice", "gitleaks"} else "recon.sqlite:jobs" if name != "dnsx" else "recon.sqlite:hosts"],
+                outputs=["recon.sqlite:observations", "recon.sqlite:dns"],
+                accounting={"group": accounting_group, "shared_counters_not_additive": True,
+                    "target_requests": scanner.store.meta("requests", 0), "dns_operations": scanner.store.meta("dns_operations", 0)},
+                limitations=[BY_NAME[name].policy_reason] if selected else [])
 
 
 @dataclass(frozen=True)
@@ -57,7 +167,7 @@ def phase_plan(config):
         "native-web": config.mode not in {"passive", "offline"} and "http" in config.modules,
         "offline-tools": bool({"jsluice", "gitleaks"} & set(config.modules)),
         "asn": providers and "asn" in config.enrichments,
-        "normalization": bool({"tech", "dedup", "priority"} & set(config.enrichments)),
+        "normalization": True,
     }
     return [{**asdict(stage), "enabled": enabled[stage.name], "effective_risk": "offline-fixtures" if config.mode == "demo" and stage.risk == "active" else stage.risk} for stage in stage_order()]
 
@@ -107,6 +217,17 @@ def print_plan(plan):
 
 
 async def native_web(scanner):
+    if scanner.config.mode in {"passive", "offline"} or "http" not in scanner.config.modules:
+        scanner.store.stage("http", "skipped", "No target HTTP in this execution")
+        return
+    names = ["httpx"] + (["katana"] if "crawl" in scanner.config.modules else []) + (["nuclei"] if "checks" in scanner.config.modules else [])
+    if "analysis" in scanner.config.modules:
+        names += [n for n in ("jsluice", "gitleaks") if n not in scanner.config.modules]
+    with native_execution(scanner, names, "shared-native-web"):
+        await _native_web(scanner)
+
+
+async def _native_web(scanner):
     from .engine import SafeResolver
     if scanner.config.mode in {"passive", "offline"} or "http" not in scanner.config.modules:
         scanner.store.stage("http", "skipped", "No target HTTP in this execution")
@@ -123,7 +244,7 @@ async def native_web(scanner):
             scanner.add_url(urljoin(origin, path), "exposure-profile-v1")
     connector = aiohttp.TCPConnector(resolver=SafeResolver(scanner.policy, scanner.config, scanner.store), ttl_dns_cache=0, force_close=True, limit=1)
     async with aiohttp.ClientSession(connector=connector, timeout=aiohttp.ClientTimeout(total=scanner.config.budgets.timeout), auto_decompress=False, trust_env=False,
-                                    headers={"User-Agent": "reconmap/2 authorized-recon", "Accept-Encoding": "identity"}, cookie_jar=aiohttp.DummyCookieJar()) as session:
+                                    headers={"User-Agent": "reconmap/3 authorized-recon", "Accept-Encoding": "identity"}, cookie_jar=aiohttp.DummyCookieJar()) as session:
         scanner.session = session
         # SQLite is the bounded durable producer-consumer queue. The host, depth,
         # request, time and disk caps are checked before work enters/consumes it.
@@ -140,8 +261,11 @@ def initialize_tools(scanner):
         info = scanner.tools[name]
         scanner.store.register_tool(info)
         spec = BY_NAME[name]
+        if not scanner.store.conn.execute("SELECT 1 FROM stage_results WHERE name=?", (STAGE_NAMES[name],)).fetchone():
+            record_execution(scanner, name, state="pending")
         if spec.policy_reason:
             scanner.store.stage(name, "blocked-by-policy", spec.policy_reason + "; native fallback: " + ",".join(spec.fallback))
+            record_execution(scanner, name, state="blocked-by-policy", reason=spec.policy_reason, limitations=[spec.policy_reason])
 
 
 async def run_pipeline(scanner):
@@ -160,28 +284,43 @@ async def run_pipeline(scanner):
         elif stage.name == "passive-tools":
             await scanner.collect_passive()
         elif stage.name == "wayback" and "wayback" in scanner.config.enrichments:
-            await collect_wayback(scanner)
+            primary = scanner.store.conn.execute("SELECT state FROM stages WHERE name='urlfinder'").fetchone()
+            if primary and primary[0] == "completed":
+                scanner.store.stage("wayback", "skipped", "URLFinder completed; no redundant historical enumeration")
+            else:
+                started = time.monotonic()
+                await collect_wayback(scanner)
+                if "urlfinder" in scanner.config.modules:
+                    status = scanner.store.conn.execute("SELECT state,detail FROM stages WHERE name='wayback'").fetchone()
+                    record_execution(scanner, "urlfinder", engine="native-cdx" if status[0] != "skipped" else None,
+                        state=status[0], reason=status[1], fallback=status[0] != "skipped", seconds=time.monotonic()-started,
+                        count=len(scanner.store.rows("historical_urls")), accounting={"target_requests": 0, "owned_provider_requests": scanner.store.meta("provider_requests", 0)})
         elif stage.name == "local-inputs":
             from .reruns import analyze_reused
-            analyze_reused(scanner)
-            scanner.local_inputs()
+            names = [n for n in ("jsluice", "gitleaks") if "analysis" in scanner.config.modules and n not in scanner.config.modules]
+            with native_execution(scanner, names, "shared-native-local-inputs"):
+                analyze_reused(scanner)
+                scanner.local_inputs()
+            await scanner.local_tools()
         elif stage.name == "dns" and ({"dns", "http"} & set(scanner.config.modules)):
-            await observe_dns(scanner)
-            if "dns" in scanner.config.modules and "http" not in scanner.config.modules and scanner.config.mode not in {"demo", "offline", "passive"}:
-                from .engine import SafeResolver
-                import asyncio
-                resolver = SafeResolver(scanner.policy, scanner.config, scanner.store)
-                failures = []
-                for host in scanner.store.rows("hosts"):
-                    if not scanner.policy.host_allowed(host["host"]):
-                        continue
-                    scanner.scheduler.check_time()
-                    try:
-                        await asyncio.wait_for(resolver.resolve(host["host"], scanner.config.scope.ports[0]), min(scanner.config.budgets.timeout, scanner.scheduler.remaining()))
-                    except (OSError, ValueError, TimeoutError) as exc:
-                        failures.append(type(exc).__name__)
-                if failures:
-                    scanner.store.stage("dns", "partial", "Some native A/AAAA resolutions failed or returned prohibited addresses")
+            if scanner.config.mode not in {"demo", "offline", "passive"}:
+                with native_execution(scanner, ["dnsx"], "native-dns"):
+                    await observe_dns(scanner)
+                    if "dns" in scanner.config.modules and "http" not in scanner.config.modules and scanner.config.mode not in {"demo", "offline", "passive"}:
+                        from .engine import SafeResolver
+                        import asyncio
+                        resolver = SafeResolver(scanner.policy, scanner.config, scanner.store)
+                        failures = []
+                        for host in scanner.store.rows("hosts"):
+                            if not scanner.policy.host_allowed(host["host"]):
+                                continue
+                            scanner.scheduler.check_time()
+                            try:
+                                await asyncio.wait_for(resolver.resolve(host["host"], scanner.config.scope.ports[0]), min(scanner.config.budgets.timeout, scanner.scheduler.remaining()))
+                            except (OSError, ValueError, TimeoutError) as exc:
+                                failures.append(type(exc).__name__)
+                        if failures:
+                            scanner.store.stage("dns", "partial", "Some native A/AAAA resolutions failed or returned prohibited addresses")
         elif stage.name == "native-web":
             await native_web(scanner)
         elif stage.name == "offline-tools":
@@ -197,9 +336,8 @@ def finalize_enrichments(scanner):
     from .enrichment.grouping import group_urls
     from .enrichment.prioritization import prioritize
     from .enrichment.technology import analyze_captured
+    scanner.correlate()
     if "tech" in scanner.config.enrichments:
         analyze_captured(scanner)
-    if "dedup" in scanner.config.enrichments:
-        group_urls(scanner.store, scanner.config.grouping)
-    if "priority" in scanner.config.enrichments:
-        prioritize(scanner.store, scanner.config.priority)
+    prioritize(scanner.store, scanner.config.priority)
+    group_urls(scanner.store, scanner.config.grouping)

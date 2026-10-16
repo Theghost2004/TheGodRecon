@@ -220,6 +220,9 @@ class Scanner:
             "endpoint_priority": "length(url)+length(reasons)+length(factors)+500",
             "lineage": "length(metadata)+length(reused_artifacts)+500",
             "tool_executions": "length(identity_json)+length(detail)+500",
+            "stage_results": "length(result_json)+500",
+            "normalized_records": "length(data)+500",
+            "investigation_candidates": "length(data)+500",
         }.items():
             metadata += self.store.conn.execute(f"SELECT COALESCE(SUM({fields}),0) FROM {table}").fetchone()[0]
         # Redundant JSON/HTML exports expand metadata; leave a conservative reserve.
@@ -313,9 +316,9 @@ class Scanner:
             return await bounded_response(response, cap)
 
     def process_response(self, url: str, response: Response, depth: int, attempt: int) -> None:
-        content_type = response.headers.get("content-type", "").split(";",1)[0]
+        content_type = response.headers.get("content-type", "").split(";",1)[0].strip().lower()
         text = response.body.decode("utf-8", errors="replace")
-        kind = "map" if urlsplit(url).path.endswith(".map") else "js" if "javascript" in content_type or urlsplit(url).path.endswith(".js") else "content"
+        kind = "map" if urlsplit(url).path.lower().endswith(".map") else "js" if "javascript" in content_type or urlsplit(url).path.lower().endswith((".js", ".mjs")) else "content"
         digest = self.save_artifact(response.body, kind, url)
         if "tech" in self.config.enrichments:
             from .enrichment.technology import fingerprint
@@ -330,7 +333,9 @@ class Scanner:
         origin = urlunsplit(urlsplit(url)._replace(path="",query="",fragment=""))
         self.store.execute("INSERT OR REPLACE INTO origins VALUES(?,?,?,?)", (origin, state, response.status, timestamp()))
         self.store.execute("UPDATE hosts SET state=? WHERE host=?", (state, urlsplit(url).hostname))
-        self.store.observed(url, "http", {"status": response.status, "headers": redact_data(response.headers), "hash": digest, "bytes": len(response.body), "truncated": response.truncated, "attempt": attempt, "technology_hints": {k:v for k,v in response.headers.items() if k in {"server","x-powered-by"}}}, "native", identity=f"http:{url}:{attempt}")
+        self.store.observed(url, "http", {"status": response.status, "method": "GET", "headers": redact_data(response.headers), "hash": digest, "bytes": len(response.body), "truncated": response.truncated, "attempt": attempt,
+            "response_features": {"password_form": bool(parser.password_input and parser.forms), "form_count": len(parser.forms)},
+            "technology_hints": {k:v for k,v in response.headers.items() if k in {"server","x-powered-by"}}}, "native", identity=f"http:{url}:{attempt}")
         if response.truncated:
             self.limit("response body/decompression cap reached")
         if response.headers.get("location") and 300 <= response.status < 400:
@@ -338,13 +343,18 @@ class Scanner:
         if "checks" in self.config.modules:
             basic_checks(self.store, url, text, response.headers, digest, response.status)
         if "analysis" in self.config.modules:
-            secrets(self.store, text, digest, "native", self.config.mode == "demo")
-            refs = analyze_js(self.store, text, url, digest, self.config.mode == "demo") if kind == "js" else analyze_map(self.store, text, url, digest, self.config.budgets.response_bytes, self.config.mode == "demo") if kind == "map" else []
+            if "gitleaks" not in self.config.modules:
+                secrets(self.store, text, digest, "native", self.config.mode == "demo")
+            refs = []
+            if "jsluice" not in self.config.modules:
+                refs = analyze_js(self.store, text, url, digest, self.config.mode == "demo", scan_secrets=False) if kind == "js" else analyze_map(self.store, text, url, digest, self.config.budgets.response_bytes, self.config.mode == "demo", scan_secrets=False) if kind == "map" else []
             for candidate, provenance in refs:
                 self.add_url(candidate, provenance, "artifact:" + digest, depth+1, fetch=provenance != "inferred_endpoint_non_get")
             for inline in parser.inline:
                 inline_hash = self.save_artifact(inline.encode(), "js", url)
-                for candidate, provenance in analyze_js(self.store, inline, url, inline_hash, self.config.mode == "demo"):
+                if "jsluice" in self.config.modules:
+                    continue
+                for candidate, provenance in analyze_js(self.store, inline, url, inline_hash, self.config.mode == "demo", scan_secrets=False):
                     self.add_url(candidate, provenance, "artifact:" + inline_hash, depth+1, fetch=provenance != "inferred_endpoint_non_get")
             for comment in parser.comments:
                 self.store.observed(url, "html-comment", {"excerpt": redact(comment[:1000]), "hash": digest}, "native")
@@ -401,12 +411,13 @@ class Scanner:
                 kind = "map" if path.suffix == ".map" else "js" if path.suffix == ".js" else "content"
                 digest = self.save_artifact(body, kind, "local-input")
                 text = body.decode(errors="replace")
-                secrets(self.store, text, digest, "local-input", self.config.mode == "demo")
-                if kind == "js":
-                    for url, provenance in analyze_js(self.store, text, self.manifest["target"], digest, self.config.mode == "demo"):
+                if "gitleaks" not in self.config.modules:
+                    secrets(self.store, text, digest, "local-input", self.config.mode == "demo")
+                if kind == "js" and "jsluice" not in self.config.modules:
+                    for url, provenance in analyze_js(self.store, text, self.manifest["target"], digest, self.config.mode == "demo", scan_secrets=False):
                         self.add_url(url, provenance, "artifact:" + digest, fetch=provenance != "inferred_endpoint_non_get")
-                elif kind == "map":
-                    for url, provenance in analyze_map(self.store, text, self.manifest["target"], digest, self.config.budgets.response_bytes):
+                elif kind == "map" and "jsluice" not in self.config.modules:
+                    for url, provenance in analyze_map(self.store, text, self.manifest["target"], digest, self.config.budgets.response_bytes, self.config.mode == "demo", scan_secrets=False):
                         self.add_url(url, provenance, "artifact:" + digest, fetch=provenance != "inferred_endpoint_non_get")
                 self.store.set_meta(key, digest)
             except (OSError, ValueError) as exc:
@@ -428,7 +439,7 @@ class Scanner:
                     text = artifact_path(self.run, artifact[0]).read_text(encoding="utf-8",errors="replace")[:20000]
                     ratio = difflib.SequenceMatcher(None, baseline["text"], text, autojunk=True).ratio()
                     if ratio >= 0.9:
-                        self.store.observed(row["url"], "soft-error-similarity", {"ratio": round(ratio,3), "hint": "similar to bounded missing-path baseline; manual review required"}, "native", identity="soft:" + row["url"] + ":" + row["hash"])
+                        self.store.observed(row["url"], "soft-error-similarity", {"hash": row["hash"], "ratio": round(ratio,3), "hint": "similar to bounded missing-path baseline; manual review required"}, "native", identity="soft:" + row["url"] + ":" + row["hash"])
             if row["hash"]:
                 self.store.relate(row["url"], "content-group:" + row["hash"], "exact_response_group", "native")
 
@@ -497,6 +508,11 @@ class Scanner:
                 except (ValueError, OSError) as exc:
                     self.store.stage("normalization", "partial", redact(str(exc)))
             self.store.execute("UPDATE tool_executions SET state=?,detail='Execution stopped before adapter completion' WHERE state IN ('running','ready')", ("interrupted" if state == "interrupted" else "skipped",))
+            for row in self.store.rows("stage_results"):
+                result = json.loads(row["result_json"])
+                if result["status"] in {"pending", "running", "ready"}:
+                    result.update(status="interrupted" if state == "interrupted" else "partial", failure_reason="Execution stopped before stage completion", finished=timestamp())
+                    self.store.execute("UPDATE stage_results SET result_json=? WHERE name=?", (json.dumps(result), row["name"]))
             self.store.execute("UPDATE stages SET state=?,detail='Workflow stopped before dependency stage completed' WHERE name LIKE 'workflow:%' AND state='running'", (state,))
             self.scheduler.checkpoint()
             self.store.execute("UPDATE jobs SET state='queued' WHERE state='running'")

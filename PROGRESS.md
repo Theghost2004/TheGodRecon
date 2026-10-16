@@ -160,3 +160,63 @@ Publication checks: Gitleaks inspected all **58** tracked/review files; its only
 - Main remains the verified V1 publication (`fbf268c`); no merge, deployment or release publication was performed. Remaining platform/provider checks are still pending as listed above.
 
 Implementation and release-preparation milestones are complete within the stated fail-closed boundaries. The next session can review/merge the branch, inspect actual CI results, and separately verify native Windows/live providers with authorized scope. Direct active binary isolation is a future security mechanism, not an enabled or claimed V2 capability.
+
+
+## V3 implementation — 2026-10-15
+
+- [x] Tool-first local execution and durable stage contracts; safe shared native
+  fallback, partial evidence/checkpoints and bounded process handling.
+- [x] Additive schema 3 normalization, contextual classification, conservative
+  grouping, evidence-aware ranking and four primary report views.
+- [x] **228 passed** in both Linux/Python 3.12 environments with real Gitleaks and
+  jsluice; clean locked installation and headless Chromium report checks passed.
+- [x] Synthetic demo, scoped loopback (13 GETs), no-request resume and immutable
+  offline rerun verified. No public target or discovery provider was scanned.
+- [ ] Native Windows/Python 3.13, graphical filesystem report navigation, live
+  providers and active subprocess containment remain explicitly unverified.
+
+Complete checklist, exact commands/results, limits and output paths:
+[docs/V3_PROGRESS.md](docs/V3_PROGRESS.md). Architecture:
+[docs/V3_ARCHITECTURE.md](docs/V3_ARCHITECTURE.md). Review description:
+[docs/V3_PULL_REQUEST.md](docs/V3_PULL_REQUEST.md). GitHub main now contains the
+V2 merge `ddaae1c`; V3 is prepared on `feature/thegodrecon-v3` above that merge.
+
+V3 publication: implementation `a20e7bd` was pushed and its remote SHA verified.
+Main remains the V2 merge `ddaae1c`. Draft PR creation returned GitHub GraphQL
+`Forbidden`; no PR was created and CI execution has not been inspected. The
+prepared body is `docs/V3_PULL_REQUEST.md`. Review/create at
+https://github.com/Theghost2004/TheGodRecon/pull/new/feature/thegodrecon-v3 .
+
+
+### V3 continuation — Linux Python 3.13 verified
+
+- [x] Independent hash-pinned Python **3.13.5** installation and **228 passed**,
+  no skips, 11.74 seconds, including actual Gitleaks/jsluice.
+- [x] Demo and scoped localhost/resume/immutable-rerun passed; 13 collection GETs,
+  zero new resume/rerun requests. Outputs: `recon-output/v3-validation/python313/`.
+- [x] Refreshed README, compatibility evidence, architecture and PR description.
+- [x] Saved cloud startup instructions and the exact `api.github.com` allowlist
+  addition. Existing install script, repository membership and secrets unchanged.
+- [ ] Environment settings review/save and publication remain necessary to apply
+  the draft; runtime API access and fresh-task restoration are unverified.
+- [ ] Native Windows and GitHub Actions results remain unverified. GitHub GraphQL
+  and REST reads still returned Forbidden; no PR was created in this session.
+
+Full evidence and reproducible commands: [V3 progress](docs/V3_PROGRESS.md).
+
+
+### V3 expanded regression pass — 2026-10-16
+
+- [x] Fixed reproduced filtering, source-correlation, normalization, stale soft-404
+  and MIME/extension handling defects; added 40 Python cases and reusable checks.
+- [x] Final **268 passed, no failures/skips**, on Linux Python 3.12 and 3.13 with
+  real Gitleaks/jsluice. Fifteen browser checks passed with zero console/browser
+  errors or external requests. Real-tool and missing-tool localhost workflows passed.
+- [x] Actual screenshots are in `docs/images/`; the full scenario matrix, commands
+  and limits are in [docs/V3_REGRESSION.md](docs/V3_REGRESSION.md).
+- [ ] Native Windows and direct active-tool containment remain unverified. These
+  results do not claim all possible defects or inputs have been exhausted.
+
+Output root: `/workspace/TheGodRecon/recon-output/v3-regression/`. Raw evidence,
+reports, environments and binaries remain excluded from Git. Only reviewed
+localhost fixture screenshots are included with the source/docs/tests.

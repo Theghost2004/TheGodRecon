@@ -23,8 +23,8 @@ REGISTRY = (
              "Independent DNS/connections bypass pinned public addresses and shared request/response limits; an HTTPS CONNECT proxy cannot enforce excluded paths"),
     ToolSpec(5, "katana", "1.8.0", "bounded web crawling", "active", ("http",), ("http", "crawl"),
              "Crawler subrequests cannot jointly enforce GET-only actions, excluded HTTPS paths, DNS pinning and shared remaining budgets without verified egress isolation"),
-    ToolSpec(6, "jsluice", "0ddfab153e060a9eeaded4d8669233f7c071e7e4", "local JavaScript analysis", "offline", ("artifacts",)),
-    ToolSpec(7, "gitleaks", "8.30.1", "local redacted secret detection", "offline", ("artifacts",)),
+    ToolSpec(6, "jsluice", "0ddfab153e060a9eeaded4d8669233f7c071e7e4", "local JavaScript analysis", "offline", ("artifacts",), ("analysis",)),
+    ToolSpec(7, "gitleaks", "8.30.1", "local redacted secret detection", "offline", ("artifacts",), ("analysis",)),
     ToolSpec(8, "nuclei", "3.11.1", "reviewed exposure checks", "active", ("http",), ("http", "checks"),
              "Template allowlisting alone cannot pin subprocess destinations or account for every request, redirect and decompressed response; only native reviewed GET checks execute"),
 )

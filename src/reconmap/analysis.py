@@ -4,7 +4,7 @@ import hashlib
 import json
 import re
 from html.parser import HTMLParser
-from urllib.parse import parse_qsl, urljoin
+from urllib.parse import parse_qsl, urljoin, urlsplit
 
 from tree_sitter import Language, Parser
 import tree_sitter_javascript
@@ -27,6 +27,7 @@ class PageParser(HTMLParser):
         self.script_text: list[str] = []
         self.form: dict | None = None
         self.truncated = False
+        self.password_input = False
 
     def reference(self, value: str, kind: str) -> None:
         if len(self.references) < 10000 and len(value) < 8192:
@@ -36,6 +37,8 @@ class PageParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = dict(attrs)
+        if tag == "input" and (a.get("type") or "").lower() == "password":
+            self.password_input = True
         if tag == "title":
             self.in_title = True
         if tag in {"a", "link"} and a.get("href"):
@@ -205,23 +208,29 @@ def basic_checks(store: Store, url: str, text: str, headers: dict[str, str], art
     if status == 200:
         for rule, pattern, title, score in signatures:
             match = re.search(pattern, text)
+            if rule == "git-head" and (not urlsplit(url).path.endswith("/.git/HEAD") or not re.fullmatch(r"ref: refs/heads/[A-Za-z0-9_./-]+\s*", text)):
+                continue
+            if rule == "environment-config" and ("html" in headers.get("content-type", "") or not urlsplit(url).path.rsplit("/", 1)[-1].startswith(".env")):
+                continue
             if match:
                 store.finding(rule, url, title, {**evidence, "excerpt": redact(text[max(0, match.start()-30):match.end()+70])}, priority=score, reasons=["current response matches a bounded exposure signature"])
     if headers.get("access-control-allow-origin"):
         store.observed(url, "cors", {"origin": headers.get("access-control-allow-origin"), "credentials": headers.get("access-control-allow-credentials"), "validation": "context required; no cross-origin credential request made"}, "native")
-    path = url.lower()
-    if any(p in path for p in ("/api/", "upload", "import", "export", "invite", "account", "admin")):
-        store.finding("route-lead", url, "Route worth manual investigation", evidence, confidence="low", priority=45 + (10 if status in {401, 403} else 0), reasons=["sensitive functionality name", "restricted response remains a live asset" if status in {401,403} else "current HTTP response"])
+    from .enrichment.prioritization import classify_route
+    category, static = classify_route(url, headers.get("content-type", ""))
+    if category not in {"other", "static", "documentation", "tracking"} and not static and (200 <= status < 300 or status in {401, 403}):
+        store.finding("route-lead", url, "Application surface for manual review", {**evidence, "classification": category}, confidence="low", priority=35, reasons=["segment-aware route classification; no vulnerability inferred", "access restricted" if status in {401,403} else "current HTTP response"])
 
 
-def analyze_js(store: Store, text: str, source_url: str, artifact_hash: str, synthetic: bool = False) -> list[tuple[str, str]]:
+def analyze_js(store: Store, text: str, source_url: str, artifact_hash: str, synthetic: bool = False, *, scan_secrets: bool = True) -> list[tuple[str, str]]:
     cache_key = "js-method-v2:" + artifact_hash
     cached = store.meta(cache_key)
     if cached is None:
         routes, unresolved, parameters = js_strings(text)
         cached = {"routes": routes, "unresolved": unresolved, "parameters": parameters}
         store.set_meta(cache_key, cached)
-        secrets(store, text, artifact_hash, "tree-sitter", synthetic)
+        if scan_secrets:
+            secrets(store, text, artifact_hash, "tree-sitter", synthetic)
     output: list[tuple[str, str]] = []
     for route in cached["routes"]:
         try:
@@ -231,7 +240,8 @@ def analyze_js(store: Store, text: str, source_url: str, artifact_hash: str, syn
             continue
         store.observed(url, "inferred_endpoint", {**route, "hash": artifact_hash, "state": "inferred from code; never confirms execution"}, "tree-sitter", identity=hashlib.sha256(f"{source_url}:{artifact_hash}:{route}".encode()).hexdigest())
         store.relate("artifact:" + artifact_hash, url, "inferred_endpoint", source_url)
-        if any(part in url.lower() for part in ("/api/","upload","import","export","invite","account")):
+        from .enrichment.prioritization import classify_route
+        if classify_route(url)[0] not in {"other", "static", "tracking"}:
             store.finding("inferred-route-lead",url,"Inferred route; traffic and authorization unverified",{"hash":artifact_hash,"line":route["line"],"method":route["method"],"excerpt":route["context"],"next_check":"Review code context and permitted manual requests; no runtime execution is implied"},priority=20,confidence="low",reasons=["static JavaScript route and source context; inferred only"],source="tree-sitter")
         for name, _ in parse_qsl(route["value"].split("?",1)[1] if "?" in route["value"] else "", keep_blank_values=True):
             store.execute("INSERT OR IGNORE INTO parameters VALUES(?,?,?,?)", (url, name, "query", "tree-sitter"))
@@ -242,6 +252,12 @@ def analyze_js(store: Store, text: str, source_url: str, artifact_hash: str, syn
         store.observed(source_url, "unresolved_expression", {"hash": artifact_hash, "expression": expression}, "tree-sitter", identity=hashlib.sha256(f"{source_url}:{expression}".encode()).hexdigest())
     for name in cached["parameters"]:
         store.execute("INSERT OR IGNORE INTO parameters VALUES(?,?,?,?)", (source_url, name, "code-key-unresolved", "tree-sitter"))
+    output.extend(source_maps(store, text, source_url))
+    return output
+
+
+def source_maps(store, text, source_url):
+    output = []
     for match in re.finditer(r"[#@]\s*sourceMappingURL\s*=\s*([^\s*]+)", text):
         try:
             output.append((normalize_url(urljoin(source_url, match[1])), "source_map"))
@@ -250,7 +266,7 @@ def analyze_js(store: Store, text: str, source_url: str, artifact_hash: str, syn
     return output
 
 
-def analyze_map(store: Store, text: str, source_url: str, artifact_hash: str, limit: int, synthetic: bool = False) -> list[tuple[str, str]]:
+def analyze_map(store: Store, text: str, source_url: str, artifact_hash: str, limit: int, synthetic: bool = False, *, scan_secrets: bool = True) -> list[tuple[str, str]]:
     try:
         data = json.loads(text)
         if not isinstance(data, dict) or data.get("version") != 3 or not isinstance(data.get("sourcesContent", []), list):
@@ -263,7 +279,7 @@ def analyze_map(store: Store, text: str, source_url: str, artifact_hash: str, li
             if isinstance(source, str):
                 digest = hashlib.sha256(source.encode()).hexdigest()
                 store.relate("artifact:" + artifact_hash, "embedded:" + digest, "source_map_content", f"index:{index}")
-                output.extend(analyze_js(store, source, source_url, digest, synthetic))
+                output.extend(analyze_js(store, source, source_url, digest, synthetic, scan_secrets=scan_secrets))
         store.observed(source_url, "source_map", {"hash": artifact_hash, "embedded_sources": len(content), "sources_fetched": False}, "native")
         store.finding("source-map", source_url, "Published source map; review context", {"hash": artifact_hash, "next_check": "Inspect embedded source locally; an exposed map alone is not a vulnerability"}, priority=25, confidence="low")
         return output

@@ -35,7 +35,7 @@ class ToolInfo:
 
     def record(self) -> dict:
         spec = BY_NAME[self.name]
-        return {**asdict(self), "id": spec.id, "risk": spec.risk, "fallback": list(spec.fallback), "adapter_version": 2}
+        return {**asdict(self), "id": spec.id, "risk": spec.risk, "fallback": list(spec.fallback), "adapter_version": 3}
 
 
 def terminate_tree(proc: subprocess.Popen) -> None:
@@ -104,7 +104,24 @@ class ProcessResult:
     stderr: str
 
 
-async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 1024 * 1024) -> ProcessResult:
+class ToolTimeout(TimeoutError):
+    """A killed tool can still have useful complete records in its prefix."""
+    def __init__(self, result):
+        super().__init__("Tool time cap reached; partial output retained")
+        self.result = result
+
+
+class ToolOutputLimit(ValueError):
+    def __init__(self, result):
+        super().__init__("Tool output cap reached; bounded prefix retained")
+        self.result = result
+
+
+async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 1024 * 1024, expected_sha: str | None = None, output_files: tuple[Path, ...] = ()) -> ProcessResult:
+    if expected_sha is not None:
+        with Path(argv[0]).open('rb') as binary:
+            if hashlib.file_digest(binary, 'sha256').hexdigest() != expected_sha:
+                raise ValueError("Executable identity changed after preflight; refusing execution")
     env = os.environ.copy()
     # Prevent tool defaults from putting target-specific output in the real home.
     home = cwd / "home"
@@ -113,11 +130,13 @@ async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 
     options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
     proc = await asyncio.create_subprocess_exec(*argv, cwd=cwd, env=env, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE, **options)
 
-    async def read(stream: asyncio.StreamReader) -> bytes:
-        output = bytearray()
+    buffers = [bytearray(), bytearray()]
+
+    async def read(stream: asyncio.StreamReader, output: bytearray) -> bytes:
         while chunk := await stream.read(65536):
-            output.extend(chunk)
-            if len(output) > limit:
+            remaining = limit - len(output)
+            output.extend(chunk[:remaining])
+            if len(chunk) > remaining:
                 raise ValueError("Tool output cap reached")
         return bytes(output)
 
@@ -139,13 +158,22 @@ async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 
             except ProcessLookupError:
                 pass
 
-    readers = [asyncio.create_task(read(proc.stdout)), asyncio.create_task(read(proc.stderr))]
+    async def monitor_files():
+        while True:
+            for path in output_files:
+                if path.exists() and path.stat().st_size > limit:
+                    raise ValueError("Tool output cap reached")
+            if proc.returncode is not None:
+                return
+            await asyncio.sleep(0.05)
+
+    readers = [asyncio.create_task(read(proc.stdout, buffers[0])), asyncio.create_task(read(proc.stderr, buffers[1])), asyncio.create_task(monitor_files())]
     try:
         async with asyncio.timeout(timeout):
-            stdout, stderr = await asyncio.gather(*readers)
+            stdout, stderr, _ = await asyncio.gather(*readers)
             await proc.wait()
         return ProcessResult(proc.returncode, stdout.decode(errors="replace"), stderr.decode(errors="replace"))
-    except BaseException:
+    except BaseException as exc:
         for task in readers:
             task.cancel()
         await asyncio.gather(*readers, return_exceptions=True)
@@ -156,6 +184,13 @@ async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 
                 pass
         async with asyncio.timeout(5):
             await asyncio.gather(discard(proc.stdout), discard(proc.stderr), proc.wait())
+        partial = ProcessResult(proc.returncode or -1, buffers[0].decode(errors="replace"), buffers[1].decode(errors="replace"))
+        if isinstance(exc, TimeoutError):
+            raise ToolTimeout(partial) from exc
+        if isinstance(exc, ValueError) and str(exc) == "Tool output cap reached":
+            raise ToolOutputLimit(partial) from exc
+        if isinstance(exc, asyncio.CancelledError):
+            exc.result = partial
         raise
 
 
