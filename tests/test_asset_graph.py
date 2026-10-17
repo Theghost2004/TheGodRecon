@@ -149,25 +149,41 @@ def test_exposure_uses_existing_ranking_and_analyst_decisions(scanner):
 
 
 def test_json_dot_html_and_sqlite_are_consistent_safe_exports(scanner,tmp_path):
+    unicode_paths=('/dashboard/überblick','/api/café','/हिन्दी')
+    page=response(scanner,unicode_paths[0],'<a href="/api/café">café</a><a href="/हिन्दी">हिन्दी</a>')
+    for path in unicode_paths[1:]:
+        response(scanner,path,'<title>überblick — café — हिन्दी</title>')
     response(scanner,'/x?value=%22%3E%3Cscript%3E','<title>&lt;img src=x onerror=alert(1)&gt;</title>')
     scanner.add_url('https://example.com/x','</script><img src=x onerror=alert(1)>',fetch=False)
     scanner.store.observed('https://example.com/x','discovery',{'parent':'https://example.com/'},'</script><img src=x onerror=alert(1)>')
-    graph(scanner)
+    expected=graph(scanner)
     summary=export_graph(scanner.run,scanner.store)
-    exported=json.loads((scanner.run/'graph/asset-graph.json').read_text())
+    exported=json.loads((scanner.run/'graph/asset-graph.json').read_text(encoding='utf-8'))
     assert summary==exported['summary']
+    assert summary==json.loads((scanner.run/'graph/graph-summary.json').read_text(encoding='utf-8'))
+    assert exported['edges']==expected['edges']
+    nodes={n['id']:n for n in exported['nodes']}
+    linked={nodes[e['destination']].get('url') for e in exported['edges']
+            if e['type']=='links_to' and nodes[e['source']].get('url')==page}
+    assert {'https://example.com'+path for path in unicode_paths[1:]} <= linked
+    for path in unicode_paths:
+        assert resource(exported,'https://example.com'+path)==resource(expected,'https://example.com'+path)
     assert len(scanner.store.rows('graph_nodes'))==summary['nodes']
     assert len(scanner.store.rows('graph_edges'))==summary['edges']
-    html=(scanner.run/'graph/asset-map.html').read_text()
+    html=(scanner.run/'graph/asset-map.html').read_text(encoding='utf-8')
+    payload=html.split('<script id="graph-data" type="application/json">',1)[1].split('</script>',1)[0]
+    assert json.loads(payload)==exported
     assert "connect-src 'none'" in html and "script-src 'sha256-" in html
     assert '</script><img' not in html and '\\u003c/script\\u003e' in html
     assert 'innerHTML' not in html and 'fetch(' not in html
     assert 'Previous relationships' in html and 'pageSize=60' in html
     dot=scanner.run/'graph/asset-graph.dot'
+    dot_text=dot.read_text(encoding='utf-8')
+    tree=(scanner.run/'graph/endpoint-tree.txt').read_text(encoding='utf-8')
+    assert all(path in dot_text and path in tree for path in unicode_paths)
+    assert dot_text.startswith('digraph TheGodRecon {')
     if shutil.which('dot'):
         subprocess.run(['dot','-Tdot',str(dot),'-o',str(tmp_path/'parsed.dot')],check=True,capture_output=True,timeout=20)
-    else:
-        assert dot.read_text().startswith('digraph TheGodRecon {')
 
 
 def test_large_graph_paginates_and_prefix_depth_is_bounded(scanner):
@@ -226,7 +242,7 @@ def test_html_escaping_malicious_dot_labels_and_graph_symlink_refusal(scanner,tm
     g['nodes'][0]['label']='"; x -> y; // </script><img src=https://bad.test onerror=alert(1)>'
     page=render_map(g)
     assert '</script><img' not in page
-    dot=tmp_path/'hostile.dot';dot.write_text(render_dot(g))
+    dot=tmp_path/'hostile.dot';dot.write_text(render_dot(g),encoding='utf-8')
     if shutil.which('dot'):
         subprocess.run(['dot','-Tdot',str(dot),'-o',str(tmp_path/'safe.dot')],check=True,capture_output=True,timeout=10)
     scanner.manifest['state']='partial'

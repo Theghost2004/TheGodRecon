@@ -8,7 +8,7 @@ import pytest
 from reconmap import wordlists as w
 from reconmap.cli import effective_config, main, parser
 from reconmap.config import ConfigError, default_config
-from reconmap.settings import load_settings
+from reconmap.settings import load_settings, save_settings
 
 
 def config(*args):
@@ -71,13 +71,72 @@ def test_fresh_install_idempotence_receipt_and_cli(upstream,capsys):
     assert 'installed' in capsys.readouterr().out.lower()
 
 
-def test_conventional_copy_reused(tmp_path,upstream,monkeypatch):
-    target=tmp_path/'usr/share/seclists'
-    for name,spec in w.CATALOG['files'].items():
-        path=target/spec['path'];path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(upstream[0][name])
+@pytest.fixture
+def verified_copy(tmp_path,upstream):
+    def create(location):
+        target=tmp_path/location
+        for name,spec in w.CATALOG['files'].items():
+            path=target/spec['path'];path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(upstream[0][name])
+        return target
+    return create
+
+
+def test_explicit_copy_reused(verified_copy,upstream):
+    target=verified_copy('custom SecLists café')
+    for _ in range(2):
+        result=w.install(target)
+        assert result['installed'] is True and result['integrity']=='verified'
+        assert Path(result['path'])==target
+        assert set(result['available'])=={'common','api','assets','dns'}
+        for spec in w.CATALOG['files'].values():
+            assert hashlib.sha256((target/spec['path']).read_bytes()).hexdigest()==spec['sha256']
+        assert Path(load_settings().seclists_directory)==target
+        assert upstream[1]==[]
+
+
+def test_conventional_copy_reused(verified_copy,upstream,monkeypatch):
+    # Simulate only this module's selector; pathlib retains the real host OS.
+    monkeypatch.setattr(w,'os',SimpleNamespace(name='posix',environ=w.os.environ))
+    target=verified_copy('usr/share/seclists')
+    assert load_settings().seclists_directory is None
+    assert not w.default_directory().exists()
     monkeypatch.setattr(w,'CONVENTIONAL',(target,))
-    assert w.install()['path']==str(target) and upstream[1]==[]
-    assert load_settings().seclists_directory==str(target)
+    located=w.locate()
+    assert located['installed'] is True and located['integrity']=='verified'
+    assert Path(located['path'])==target
+    assert Path(w.install()['path'])==target
+    assert Path(load_settings().seclists_directory)==target
+    assert upstream[1]==[]
+
+
+def test_windows_ignores_conventional_copy_until_registered(verified_copy,upstream,monkeypatch):
+    monkeypatch.setattr(w,'os',SimpleNamespace(name='nt',environ=w.os.environ))
+    target=verified_copy('usr/share/seclists')
+    assert load_settings().seclists_directory is None
+    assert not w.default_directory().exists()
+    monkeypatch.setattr(w,'CONVENTIONAL',(target,))
+    assert w.locate()['installed'] is False
+    assert Path(w.install(target)['path'])==target
+    assert Path(load_settings().seclists_directory)==target
+    assert Path(w.locate()['path'])==target
+    assert upstream[1]==[]
+
+
+@pytest.mark.parametrize('platform',['posix','nt'])
+@pytest.mark.parametrize('registered',[False,True],ids=['managed','registered'])
+def test_copy_discovery_precedence(verified_copy,upstream,monkeypatch,platform,registered):
+    monkeypatch.setattr(w,'os',SimpleNamespace(name=platform,environ=w.os.environ))
+    conventional=verified_copy('usr/share/seclists')
+    managed=verified_copy(w.default_directory())
+    monkeypatch.setattr(w,'CONVENTIONAL',(conventional,))
+    expected=managed
+    if registered:
+        expected=verified_copy('registered SecLists')
+        settings=load_settings();settings.seclists_directory=str(expected);save_settings(settings)
+    assert Path(w.locate()['path'])==expected
+    assert Path(w.install()['path'])==expected
+    assert Path(load_settings().seclists_directory)==expected
+    assert upstream[1]==[]
 
 
 @pytest.mark.parametrize('failure',['interrupted','checksum','timeout'])
