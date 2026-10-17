@@ -16,7 +16,7 @@ Application version remains 3.1.0. Branch: `feature/blackbox-asset-map`, based o
 - [x] Run full regression suite on Linux Python 3.12 and 3.13.
 - [x] Run localhost workflow and browser checks; capture example screenshots.
 - [x] Finish user/architecture documentation and PR description.
-- [ ] Commit, push dedicated branch and attempt PR creation.
+- [x] Commit, push dedicated branch and attempt PR creation.
 
 No public target scans. Direct active scanner subprocesses remain policy restricted. Native Windows execution requires Windows CI/manual verification. Existing GitHub API restrictions may prevent PR creation even when Git push works.
 
@@ -84,3 +84,14 @@ The full output tree is ignored by Git. Reviewable fixture graph exports and scr
 - `tests/test_v3_orchestration.py`
 - `tools/check_asset_map_browser.cjs`
 - `tools/verify_local_workflow.py`
+
+## GitHub publication
+
+Implementation commit: `923cbd6c88076d0d2240281b8cf3c004019cb5de`. Pushed to `feature/blackbox-asset-map` on `Theghost2004/TheGodRecon`. Main was not changed or merged.
+
+The `gh pr create` attempt returned `Post "https://api.github.com/graphql": Forbidden`; no PR was created through this environment. The complete review description is saved in [BLACKBOX_PULL_REQUEST.md](BLACKBOX_PULL_REQUEST.md).
+
+- [Published branch](https://github.com/Theghost2004/TheGodRecon/tree/feature/blackbox-asset-map)
+- [Create the prepared PR](https://github.com/Theghost2004/TheGodRecon/compare/main...feature/blackbox-asset-map?expand=1)
+
+This is a GitHub API access limitation, not a code/test failure or an approval request. Git transport successfully published the source, tests, documentation, screenshots and fixture exports.
