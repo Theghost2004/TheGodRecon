@@ -1,0 +1,86 @@
+{
+  "config": {
+    "version": 2,
+    "scope": {
+      "hosts": [
+        "example.com"
+      ],
+      "exclude_hosts": [],
+      "ports": [
+        443
+      ],
+      "schemes": [
+        "http",
+        "https"
+      ],
+      "paths": [
+        "/"
+      ],
+      "exclude_paths": [],
+      "lab": false
+    },
+    "budgets": {
+      "per_host_rps": 2.0,
+      "overall_rps": 10.0,
+      "depth": 3,
+      "urls_per_host": 500,
+      "requests": 5000,
+      "timeout": 15.0,
+      "retries": 1,
+      "response_bytes": 10485760,
+      "artifact_bytes": 1073741824,
+      "minutes": 30.0,
+      "dns_queries": 1000,
+      "provider_results": 5000,
+      "provider_seconds": 60
+    },
+    "mode": "demo",
+    "modules": [
+      "http",
+      "crawl",
+      "analysis",
+      "checks"
+    ],
+    "tools": {},
+    "strict_tools": false,
+    "local_inputs": [],
+    "provider_sources": {
+      "subfinder": [
+        "crtsh"
+      ],
+      "urlfinder": [
+        "commoncrawl"
+      ]
+    },
+    "selected_tools": null,
+    "profile": null,
+    "enrichments": [],
+    "providers": {
+      "requests": 250,
+      "rps": 1.0,
+      "cache_seconds": 86400,
+      "wayback_pages": 5,
+      "page_size": 100
+    },
+    "grouping": {
+      "numeric_segments": true,
+      "uuid_segments": true,
+      "query_names": true
+    },
+    "priority": {
+      "version": 1,
+      "weights": {
+        "base": 5,
+        "route": 15,
+        "observed": 25,
+        "restricted": 10,
+        "sources": 10,
+        "parameters": 5,
+        "technology": 5,
+        "finding": 20,
+        "duplicate_penalty": 10
+      }
+    }
+  },
+  "digest": "1d14d312d3774e0971aa5afd042ea3e3c2b3a36748449f854763dcb7d7bbc9d3"
+}

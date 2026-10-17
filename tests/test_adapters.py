@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path, PureWindowsPath
 
 import pytest
@@ -67,10 +68,19 @@ def test_timeout_kills_process_tree(tmp_path):
         with pytest.raises(TimeoutError):await execute([sys.executable,'-c',script,str(child_pid)],tmp_path,0.5)
     asyncio.run(go())
     pid=int(child_pid.read_text())
-    # On Linux a killed descendant can be a zombie awaiting init; it cannot execute.
+    # SIGKILL closes inherited pipes before every descendant necessarily reaches
+    # its final /proc state. Observe bounded termination rather than racing that
+    # kernel transition when independent test suites run under CPU load.
     proc_stat=Path(f'/proc/{pid}/stat')
-    if proc_stat.exists():assert proc_stat.read_text().split()[2]=='Z'
-    else:assert not pid_alive(pid)
+    deadline=time.monotonic()+2
+    while True:
+        try:
+            stopped=proc_stat.read_text().split()[2]=='Z' if proc_stat.exists() else not pid_alive(pid)
+        except FileNotFoundError:
+            stopped=True
+        if stopped:break
+        assert time.monotonic()<deadline, 'Timed-out tool descendant remains alive'
+        time.sleep(.01)
 
 
 def test_cancel_subprocess(tmp_path):

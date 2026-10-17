@@ -61,7 +61,7 @@ def test_registered_damaged_binary_preserved_during_repair(tmp_path,monkeypatch)
     monkeypatch.setattr(installer,'install',lambda *a:pytest.fail('should preserve custom'))
     monkeypatch.setattr(module,'health',lambda:{'core':'available','optional_tools':'partial'})
     monkeypatch.setattr(module,'print_health',lambda _:None)
-    assert setup(yes=True)==2
+    assert setup(yes=True, with_seclists=False)==2
     assert binary.read_bytes()==b'keep'
 
 
@@ -72,8 +72,8 @@ def test_setup_reuses_all_compatible_without_download(tmp_path,monkeypatch):
     monkeypatch.setattr(installer,'install',lambda *a:pytest.fail('redownload'))
     monkeypatch.setattr(module,'health',lambda:{'core':'available','optional_tools':'ready'})
     monkeypatch.setattr(module,'print_health',lambda _:None)
-    assert setup(yes=True)==0
-    assert setup(yes=True)==0
+    assert setup(yes=True, with_seclists=False)==0
+    assert setup(yes=True, with_seclists=False)==0
     assert set(settings.load_settings().registered_tools)==set(BY_NAME)
 
 
@@ -91,7 +91,7 @@ def test_setup_missing_network_failure_continues_independent_tools(tmp_path,monk
     monkeypatch.setattr(jsbuild,'build',lambda *a:(_ for _ in ()).throw(ValueError('compiler missing')))
     monkeypatch.setattr(module,'health',lambda:{'core':'available','optional_tools':'partial'})
     monkeypatch.setattr(module,'print_health',lambda _:None)
-    assert setup(yes=True)==2
+    assert setup(yes=True, with_seclists=False)==2
     assert len(attempts)==7 and 'gitleaks' in installed
     assert 'compiler missing' in capsys.readouterr().out
 
@@ -184,7 +184,7 @@ def test_corrupt_archive_is_reported_and_setup_continues(tmp_path,monkeypatch,ca
     monkeypatch.setattr(jsbuild,'build',lambda *a:(_ for _ in ()).throw(tarfile.ReadError('fixture corrupt source')))
     monkeypatch.setattr(module,'health',lambda:{'core':'available','optional_tools':'partial'})
     monkeypatch.setattr(module,'print_health',lambda _:None)
-    assert setup(yes=True)==2
+    assert setup(yes=True, with_seclists=False)==2
     assert len(attempted)==7 and 'nuclei' in attempted
     assert 'corrupt archive' in capsys.readouterr().out
 

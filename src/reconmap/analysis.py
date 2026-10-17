@@ -22,6 +22,7 @@ class PageParser(HTMLParser):
         self.inline: list[str] = []
         self.comments: list[str] = []
         self.title = ""
+        self.base_href: str | None = None
         self.in_title = False
         self.in_script = False
         self.script_text: list[str] = []
@@ -37,6 +38,8 @@ class PageParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         a = dict(attrs)
+        if tag == "base" and self.base_href is None and a.get("href"):
+            self.base_href = a["href"][:8192]
         if tag == "input" and (a.get("type") or "").lower() == "password":
             self.password_input = True
         if tag == "title":
@@ -238,7 +241,7 @@ def analyze_js(store: Store, text: str, source_url: str, artifact_hash: str, syn
         except ValueError:
             store.observed(source_url, "invalid_reference", {"value": redact(route["value"][:1000]), "reason": "Malformed JavaScript URL"}, "tree-sitter")
             continue
-        store.observed(url, "inferred_endpoint", {**route, "hash": artifact_hash, "state": "inferred from code; never confirms execution"}, "tree-sitter", identity=hashlib.sha256(f"{source_url}:{artifact_hash}:{route}".encode()).hexdigest())
+        store.observed(url, "inferred_endpoint", {**route, "hash": artifact_hash, "source_url": source_url, "state": "inferred from code; never confirms execution"}, "tree-sitter", identity=hashlib.sha256(f"{source_url}:{artifact_hash}:{route}".encode()).hexdigest())
         store.relate("artifact:" + artifact_hash, url, "inferred_endpoint", source_url)
         from .enrichment.prioritization import classify_route
         if classify_route(url)[0] not in {"other", "static", "tracking"}:

@@ -150,6 +150,7 @@ def analyze_reused(scanner):
     if not scanner.store.meta("reanalyze-artifacts") or "analysis" not in scanner.config.modules:
         return
     from .analysis import analyze_js, analyze_map, secrets
+    from .selectors import capability_enabled
     synthetic = scanner.manifest.get("synthetic", False)
     for artifact in scanner.store.rows("artifacts"):
         if artifact["analyzed"]:
@@ -159,11 +160,11 @@ def analyze_reused(scanner):
         if len(body) > scanner.config.budgets.response_bytes:
             raise ConfigError("Reused artifact exceeds analysis cap")
         text = body.decode(errors="replace")
-        if "gitleaks" not in scanner.config.modules:
+        if capability_enabled(scanner.config, "gitleaks") and "gitleaks" not in scanner.config.modules:
             secrets(scanner.store, text, artifact["hash"], "reanalysis", synthetic)
         bases = [r[0] for r in scanner.store.conn.execute("SELECT parent FROM relationships WHERE child=? AND kind='response_body'", ("artifact:" + artifact["hash"],)) if r[0].startswith(("http://", "https://"))] or [scanner.manifest["target"]]
         for base in bases:
-            if "jsluice" in scanner.config.modules:
+            if not capability_enabled(scanner.config, "jsluice") or "jsluice" in scanner.config.modules:
                 continue
             refs = analyze_js(scanner.store, text, base, artifact["hash"], synthetic, scan_secrets=False) if artifact["kind"] == "js" else analyze_map(scanner.store, text, base, artifact["hash"], scanner.config.budgets.response_bytes, synthetic, scan_secrets=False) if artifact["kind"] == "map" else []
             for url, provenance in refs:
@@ -200,17 +201,17 @@ def rerun(args):
     parent = parent.resolve()
     if (args.target or args.target_pos) and (args.target or args.target_pos) != parent_manifest["target"]:
         raise ConfigError("Rerun keeps the parent seed; use scan for a different target")
-    if args.tools is None and args.modules is None and args.profile is None and not args.all_tool:
+    if args.tools is None and args.modules is None and args.profile is None and not args.all_tool and not args.god_mode:
         raise ConfigError("Rerun requires --tools, --modules or --profile; for local reanalysis use --tools offline")
     # Reuse the explicit saved authorization, unless a current YAML is supplied.
     args.resume = parent
     config = effective_config(args)
     if args.config is None:
         config.local_inputs = []
-    if args.enrich is None and args.profile != "full":
+    if args.enrich is None and args.profile != "full" and not args.god_mode:
         config.enrichments = [name for name in config.enrichments if name not in {"asn", "wayback"}]
     if args.tools is not None and all(BY_NAME[n].risk == "offline" for n in select_tools(args.tools)) and args.mode is None:
-        config = resolve_selection(config, tools=args.tools, mode="offline", enrich=args.enrich or (",".join(config.enrichments) if config.enrichments else "none"))
+        config = resolve_selection(config, tools=args.tools, mode="offline", enrich=args.enrich or (",".join(e for e in config.enrichments if e in {"tech","dedup","priority"}) or "none"))
     if config.mode == "demo":
         raise ConfigError("Fresh rerun uses --mode standard or offline; demo is a separate deterministic command")
     network_selected = (config.mode not in {"offline", "passive"} and bool({"http", "dns"} & set(config.modules))) or (config.mode != "offline" and bool({"subfinder", "urlfinder"} & set(config.modules) or {"asn", "wayback"} & set(config.enrichments)))

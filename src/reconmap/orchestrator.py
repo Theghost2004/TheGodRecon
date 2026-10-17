@@ -9,6 +9,7 @@ import aiohttp
 
 from .config import ConfigError, normalize_url
 from .scope import ScopePolicy
+from .selectors import capability_enabled
 from .tool_registry import BY_NAME, REGISTRY, execution_status
 
 
@@ -50,10 +51,16 @@ def record_execution(scanner, name, *, engine=None, state="completed", reason=""
     selected = name if name in selected_names(scanner.config) else None
     result = StageResult(**json.loads(row[0])) if row else StageResult(stage, selected,
                          scanner.tools[name].record() if selected else {})
+    primary_attempt = engine == name
+    if primary_attempt and state not in {"running", "pending"} and not scanner.store.meta("executed:"+name, False):
+        # A failed spawn/identity check is not successful process execution.
+        result.actual_execution_engines = [e for e in result.actual_execution_engines if e != name]
+        engine = None
     if engine and engine not in result.actual_execution_engines:
         result.actual_execution_engines.append(engine)
-    result.fallback_used |= fallback and engine is not None
-    if engine == name or (engine is None and selected):
+    native_selected = scanner.config.execution_engines.get(name) == "native"
+    result.fallback_used |= fallback and engine is not None and not native_selected
+    if primary_attempt or (engine is None and selected):
         if result.primary_status in {"failed", "partial", "unavailable", "incompatible", "blocked-by-policy"} and state in {"completed", "running"}:
             pass  # another successful input does not erase failed primary coverage
         else:
@@ -67,6 +74,8 @@ def record_execution(scanner, name, *, engine=None, state="completed", reason=""
     for target, values in ((result.input_artifacts, inputs), (result.output_artifacts, outputs),
                            (result.coverage_limitations, limitations)):
         target[:] = sorted(set(target) | {str(v) for v in values})
+    if native_selected:
+        result.primary_status = "native-selected"
     result.discovered_records += count
     result.duration_seconds = round(result.duration_seconds + seconds, 6)
     result.request_accounting.update(accounting or {})
@@ -88,14 +97,23 @@ def fallback_allowed(scanner, name):
     return True
 
 
+def native_counts(scanner):
+    observations = scanner.store.rows("observations")
+    findings = scanner.store.rows("findings")
+    check_rules = {"git-head", "environment-config", "directory-index", "debug-surface", "api-docs", "route-lead"}
+    return {"dnsx": len(scanner.store.rows("dns")), "katana": len(scanner.store.rows("urls")),
+            "httpx": sum(r["kind"] == "http" for r in observations),
+            "jsluice": sum(r["kind"] == "inferred_endpoint" for r in observations),
+            "gitleaks": sum(r["subject"].startswith("artifact:") and r["source"] in {"native", "native-fallback", "local-input"} for r in findings),
+            "nuclei": sum(r["rule"] in check_rules and r["source"] == "native" for r in findings)}
+
+
 @contextmanager
 def native_execution(scanner, names, accounting_group):
     started = time.monotonic()
     for name in names:
         record_execution(scanner, name, engine=NATIVE_ENGINES[name], state="running")
-    counts = {"dnsx": len(scanner.store.rows("dns")), "httpx": sum(r["kind"] == "http" for r in scanner.store.rows("observations")),
-              "katana": len(scanner.store.rows("urls")), "jsluice": sum(r["kind"] == "inferred_endpoint" for r in scanner.store.rows("observations")),
-              "gitleaks": len(scanner.store.rows("findings")), "nuclei": len(scanner.store.rows("findings"))}
+    counts = native_counts(scanner)
     state, reason = "completed", ""
     try:
         yield
@@ -108,7 +126,7 @@ def native_execution(scanner, names, accounting_group):
             component = {"dnsx": "dns", "httpx": "http", "katana": "crawl", "nuclei": "checks", "jsluice": "analysis", "gitleaks": "analysis"}[name]
             prior = scanner.store.conn.execute("SELECT state,detail FROM stages WHERE name=?", (component,)).fetchone()
             effective_state = "partial" if scanner.limits or (prior and prior[0] in {"failed", "partial"}) else state
-            new_count = len(scanner.store.rows("dns")) if name == "dnsx" else len(scanner.store.rows("urls")) if name == "katana" else sum(r["kind"] == ("http" if name == "httpx" else "inferred_endpoint") for r in scanner.store.rows("observations")) if name in {"httpx", "jsluice"} else len(scanner.store.rows("findings"))
+            new_count = native_counts(scanner)[name]
             record_execution(scanner, name, engine=NATIVE_ENGINES[name], state=effective_state, reason=reason or (prior[1] if prior and prior[0] in {"failed", "partial"} else ""), fallback=selected,
                 count=max(0, new_count-counts[name]),
                 seconds=time.monotonic()-started,
@@ -131,9 +149,11 @@ GRAPH = (
     Stage("passive-tools", ("discovery",), "provider"),
     Stage("wayback", ("passive-tools",), "provider"),
     Stage("local-inputs", ("discovery",), "offline"),
-    Stage("dns", ("passive-tools", "wayback"), "active"),
+    Stage("wordlist-hosts", ("local-inputs",), "local"),
+    Stage("dns", ("passive-tools", "wayback", "wordlist-hosts"), "active"),
     Stage("native-web", ("dns", "local-inputs"), "active"),
-    Stage("offline-tools", ("native-web", "local-inputs"), "offline"),
+    Stage("content-discovery", ("native-web",), "active"),
+    Stage("offline-tools", ("content-discovery", "local-inputs"), "offline"),
     Stage("asn", ("dns", "native-web"), "provider"),
     Stage("normalization", ("offline-tools", "asn"), "offline"),
 )
@@ -163,7 +183,9 @@ def phase_plan(config):
         "passive-tools": providers and bool({"subfinder", "urlfinder"} & set(config.modules)),
         "wayback": providers and "wayback" in config.enrichments,
         "local-inputs": bool(config.local_inputs) or "analysis" in config.modules,
-        "dns": active and bool({"dns", "http"} & set(config.modules)),
+        "wordlist-hosts": config.discovery.god_mode,
+        "content-discovery": config.discovery.enabled,
+        "dns": active and (capability_enabled(config, "dnsx") or config.selected_tools is None and "http" in config.modules),
         "native-web": config.mode not in {"passive", "offline"} and "http" in config.modules,
         "offline-tools": bool({"jsluice", "gitleaks"} & set(config.modules)),
         "asn": providers and "asn" in config.enrichments,
@@ -194,6 +216,7 @@ def build_plan(config, target, tools):
         "selected_tools": records, "execution_order": phase_plan(config),
         "native_modules": [m for m in config.modules if m not in BY_NAME],
         "enrichments": config.enrichments, "scope": config.scope.model_dump(),
+        "discovery": config.discovery.model_dump(),
         "budgets": config.budgets.model_dump(), "provider_budgets": config.providers.model_dump(),
         "provider_access": provider_stages, "fully_supported": not issues,
         "safe_to_execute": not (config.strict_tools and issues),
@@ -222,7 +245,7 @@ async def native_web(scanner):
         return
     names = ["httpx"] + (["katana"] if "crawl" in scanner.config.modules else []) + (["nuclei"] if "checks" in scanner.config.modules else [])
     if "analysis" in scanner.config.modules:
-        names += [n for n in ("jsluice", "gitleaks") if n not in scanner.config.modules]
+        names += [n for n in ("jsluice", "gitleaks") if capability_enabled(scanner.config, n) and n not in scanner.config.modules]
     with native_execution(scanner, names, "shared-native-web"):
         await _native_web(scanner)
 
@@ -274,6 +297,12 @@ async def run_pipeline(scanner):
     from .enrichment.wayback import collect_wayback
     initialize_tools(scanner)
     enabled = {row["name"]: row["enabled"] for row in phase_plan(scanner.config)}
+    if "http" not in scanner.config.modules:
+        for name in ("katana", "nuclei"):
+            if name in selected_names(scanner.config):
+                record_execution(scanner, name, state="skipped", reason="HTTP collection prerequisite not selected; no active fallback executed", limitations=["Select httpx with this capability to collect fresh authorized HTTP evidence"])
+                scanner.store.stage(name, "skipped", "HTTP collection prerequisite not selected")
+                scanner.limit(name + ": HTTP collection prerequisite not selected; coverage incomplete")
     for stage in stage_order():
         scanner.scheduler.check_time()
         scanner.store.stage("workflow:" + stage.name, "running", "Dependencies: " + ",".join(stage.dependencies))
@@ -297,12 +326,18 @@ async def run_pipeline(scanner):
                         count=len(scanner.store.rows("historical_urls")), accounting={"target_requests": 0, "owned_provider_requests": scanner.store.meta("provider_requests", 0)})
         elif stage.name == "local-inputs":
             from .reruns import analyze_reused
-            names = [n for n in ("jsluice", "gitleaks") if "analysis" in scanner.config.modules and n not in scanner.config.modules]
+            names = [n for n in ("jsluice", "gitleaks") if capability_enabled(scanner.config, n) and "analysis" in scanner.config.modules and n not in scanner.config.modules]
             with native_execution(scanner, names, "shared-native-local-inputs"):
                 analyze_reused(scanner)
                 scanner.local_inputs()
             await scanner.local_tools()
-        elif stage.name == "dns" and ({"dns", "http"} & set(scanner.config.modules)):
+        elif stage.name == "wordlist-hosts" and scanner.config.discovery.god_mode:
+            from .content_discovery import prepare_hosts
+            prepare_hosts(scanner)
+        elif stage.name == "content-discovery" and scanner.config.discovery.enabled:
+            from .content_discovery import run as discover_content
+            await discover_content(scanner)
+        elif stage.name == "dns" and enabled["dns"]:
             if scanner.config.mode not in {"demo", "offline", "passive"}:
                 with native_execution(scanner, ["dnsx"], "native-dns"):
                     await observe_dns(scanner)

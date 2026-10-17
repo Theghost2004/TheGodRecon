@@ -7,7 +7,7 @@ A local reconnaissance coordinator for authorized security research. Map a scope
 - Simple commands, optional interactive menu, and live terminal progress.
 - Eight selectable tool capabilities with verified setup and native fallbacks.
 - Exact-host scope, bounded requests, resumable scans, and separate folders for every run.
-- Evidence-backed endpoint ranking, duplicate grouping, and offline HTML reports.
+- Evidence-backed endpoint ranking, offline reports, and a separate navigable application relationship map.
 
 ## Requirements
 
@@ -45,8 +45,8 @@ The following target is illustrative. Scan only a target you are authorized to t
 
 ```bash
 reconmap setup
-reconmap scan authorized.example
-reconmap scan authorized.example --all-tool
+reconmap blackbox https://authorized.example
+reconmap scan https://authorized.example --tools subfinder,httpx,katana
 reconmap report
 ```
 
@@ -62,9 +62,11 @@ Run `reconmap` with no arguments in a terminal for the interactive menu. In scri
 
 | Command | Purpose |
 |---|---|
-| `reconmap scan HOST` | Balanced scan with exact-host defaults |
+| `reconmap blackbox URL` | All eight capabilities, intelligent discovery, report and endpoint map |
+| `reconmap scan HOST` | Balanced native scan; customize with `--tools` and `--exclude-tools` |
 | `reconmap scan HOST --quick` | Smaller request and depth limits |
 | `reconmap scan HOST --deep` | Larger bounded scan with local analysis tools |
+| `reconmap scan HOST --god-mode` | Compatibility alias for BlackBox; also `--full-coverage` |
 | `reconmap scan HOST --all-tool` | Select all eight capabilities; same as `--tools all` |
 | `reconmap scan HOST --config scope.yaml` | Use your reusable authorization and scan settings |
 | `reconmap scan HOST --no-progress` | Plain stage logs |
@@ -76,6 +78,43 @@ Run `reconmap` with no arguments in a terminal for the interactive menu. In scri
 | `reconmap settings --set auto_open true` | Opt into opening reports after scans |
 
 `--standard`, `--preset quick/standard/deep`, and `--all-tools` are also supported. Existing `--target`, `--profile`, `--tools`, `--modules`, `plan`, `rerun`, `diff`, and `report --run` commands remain available. Use `reconmap --help` or a command's `--help` for details.
+
+## BlackBox and Customized Scans
+
+Use comprehensive coverage on an explicitly authorized target:
+
+```bash
+reconmap blackbox https://example.com
+reconmap blackbox https://example.com --max-requests 5000 --depth 3 --max-minutes 30
+```
+
+BlackBox coordinates all eight capabilities, local JavaScript/secret analysis, evidence-driven SecLists selection, correlation, the existing report and a separate endpoint relationship map. Every request stays within the configured scope and shared budgets. Restricted external tools use protected native implementations; the coverage summary names the actual engines and limitations.
+
+For direct control, use the same engine through `scan`:
+
+```bash
+reconmap scan https://example.com --tools subfinder,httpx,katana
+reconmap scan https://example.com --tools all --exclude-tools 7,8
+reconmap scan https://example.com --tools 4,5,6 --engine jsluice=native --depth 3
+reconmap scan https://example.com --auto-wordlists --exclude-wordlist assets
+```
+
+Unselected capabilities do not run. Crawling and active exposure checks require selected HTTP collection (`httpx`); absent prerequisites are explained. `--god-mode` and `--full-coverage` map to BlackBox. `--all-tool` remains eight-tool selection without automatic enrichment/discovery; `--deep` remains a budget preset. All use one pipeline. [Workflow, YAML, graph schema and verification details](docs/BLACKBOX.md).
+
+## SecLists
+
+Linux bootstrap/setup installs or reuses **four reviewed SecLists dictionaries plus their license** (about 237 KB), rather than the complete collection. Use `python tools/bootstrap.py --skip-wordlists` to decline, or explicitly install on either supported platform:
+
+```bash
+reconmap setup --with-seclists --yes
+reconmap wordlists doctor
+reconmap wordlists list
+reconmap scan example.com --wordlist /path/to/custom.txt
+```
+
+The managed location is `$XDG_DATA_HOME/thegodrecon/wordlists/seclists` (normally `~/.local/share/thegodrecon/wordlists/seclists`) on Linux and `%LOCALAPPDATA%\thegodrecon\wordlists\seclists` on Windows. A matching `/usr/share/seclists` copy is reused. `RECONMAP_CONFIG_DIR` makes settings and wordlists portable together.
+
+BlackBox selects small common paths, supplements observed APIs, and uses captured JavaScript or current application fingerprints to choose relevant entries. Exact-host scope never expands into subdomains. Explicit custom UTF-8 lists replace automatic dictionaries, can be repeated, and use the same scope and discovery limits. `--exclude-wordlist NAME_OR_PATH` excludes a catalog list or exact custom path. Scans only read local lists; missing lists are an optional coverage limitation. [Detailed behavior and YAML options](docs/GOD_MODE.md).
 
 ## How the Tool Works
 
@@ -93,6 +132,8 @@ The HTML report is in **`RUN_FOLDER/reports/index.html`**. It provides Live Asse
 reconmap report
 reconmap report --run recon-output/example.com
 ```
+
+BlackBox and normal scans also produce `graph/endpoint-tree.txt`, `graph/asset-graph.json`, `graph/asset-graph.dot`, `graph/graph-summary.json`, and `graph/asset-map.html`. The report links to the offline map; the final terminal summary prints absolute paths. Normal scans can opt out with `--no-graph`. Graphviz is optional.
 
 The first command opens the latest known valid report when a browser is available. The second regenerates a specified report. Headless systems print an absolute file path. Automatic browser opening after scans is off by default.
 
@@ -116,6 +157,8 @@ Keep raw evidence private. Do not scan public targets without authorization.
 
 ## Advanced Documentation
 
+- [BlackBox workflow, graph model and validation](docs/BLACKBOX.md)
+- [BlackBox implementation checklist](docs/BLACKBOX_PROGRESS.md)
 - [3.1.0 release, installation and verification details](docs/V3_1_RELEASE.md)
 - [Advanced commands, YAML, budgets, resume and exports](docs/ADVANCED_USAGE.md)
 - [Tool pins, installation and safety boundaries](docs/TOOLS.md)

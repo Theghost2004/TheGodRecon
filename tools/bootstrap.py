@@ -21,6 +21,10 @@ def main(argv=None):
     parser.add_argument('--directory', type=Path, help='Portable managed tool directory')
     parser.add_argument('--go', help='Existing Go executable for the pinned jsluice build')
     parser.add_argument('--cc', help='Existing GCC executable for the pinned jsluice build')
+    wordlists = parser.add_mutually_exclusive_group()
+    wordlists.add_argument('--with-seclists', action='store_true')
+    wordlists.add_argument('--skip-wordlists', action='store_true')
+    parser.add_argument('--seclists-path', type=Path)
     args = parser.parse_args(argv)
     if sys.version_info < (3, 12):
         parser.exit(3, 'Python 3.12+ required. Install it, then rerun this command. No OS packages were changed.\n')
@@ -39,6 +43,13 @@ def main(argv=None):
             subprocess.run([str(python), '-c', 'import sys; assert sys.version_info >= (3,12) and sys.prefix != sys.base_prefix'], check=True, timeout=15)
         else:
             venv.EnvBuilder(with_pip=True).create(environment)
+        # uv and some other environment managers intentionally omit pip.
+        # Repair only the already validated project venv, using Python's bundled
+        # installer; no OS package manager or elevated permission is involved.
+        pip_probe = subprocess.run([str(python), '-c', 'import importlib.util,sys; sys.exit(0 if importlib.util.find_spec("pip") else 1)'], check=False, timeout=15)
+        if pip_probe.returncode:
+            print('Project environment has no pip; seeding it with bundled ensurepip.', flush=True)
+            subprocess.run([str(python), '-m', 'ensurepip', '--upgrade'], check=True, timeout=120)
         env = os.environ.copy()
         env['PIP_CACHE_DIR'] = str(root / '.cache' / 'pip')
         subprocess.run([str(python), '-m', 'pip', 'install', '--require-hashes', '-r', str(root/'requirements.lock')], cwd=root, env=env, check=True)
@@ -46,6 +57,9 @@ def main(argv=None):
         command = [str(python), '-m', 'reconmap', 'setup', '--yes']
         if args.skip_tools:
             command.append('--skip-tools')
+        if args.with_seclists: command.append('--with-seclists')
+        if args.skip_wordlists: command.append('--skip-wordlists')
+        if args.seclists_path: command.extend(['--seclists-path', str(args.seclists_path)])
         for name in ('directory', 'go', 'cc'):
             value = getattr(args, name)
             if value:

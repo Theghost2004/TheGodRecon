@@ -168,3 +168,13 @@ response hash and current-run observation. MIME parsing is case-insensitive whil
 URL path case remains preserved. Report filters open matching ancestor sections,
 hide empty views and match each discovery source independently. No collector
 permission or raw-evidence retention behavior changes with these report fixes.
+
+## BlackBox extension (application version 3.1.0)
+
+The canonical `blackbox` command and customized `scan` share this coordinator.
+Explicit selections now gate both external adapters and native JS/secret
+fallbacks; absent HTTP prerequisites are explained without starting unselected
+collection. Comprehensive aliases share the BlackBox profile. Additive SQLite
+migration 3→4 caches typed graph nodes/edges derived from existing normalized
+records and provenance. The established report links to a separate offline map.
+See [BlackBox architecture, graph schema and compatibility](BLACKBOX.md).

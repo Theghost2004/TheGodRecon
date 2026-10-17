@@ -1,0 +1,33 @@
+{
+  "upstream": "https://github.com/danielmiessler/SecLists",
+  "release": "2026.1",
+  "revision": "190c6f7bd58c847ceadfe57d9853592737f059e8",
+  "kind": "curated subset; not the full SecLists collection",
+  "files": {
+    "common": {
+      "path": "Discovery/Web-Content/common.txt",
+      "bytes": 38506,
+      "sha256": "fc320bacd30d93f5080029912b93667cd739401f81634579a7125fc0c027e6d5"
+    },
+    "api": {
+      "path": "Discovery/Web-Content/api/api-endpoints.txt",
+      "bytes": 4372,
+      "sha256": "001a97bdab2d0cd787546ca3c543c01280fe6539b3337521aabfc6c0ea0703b1"
+    },
+    "assets": {
+      "path": "Discovery/Web-Content/raft-small-directories.txt",
+      "bytes": 163210,
+      "sha256": "06e1ac7b390c17eb9e0da416d0599c785a1541813daa95b01c676bc92d55185f"
+    },
+    "dns": {
+      "path": "Discovery/DNS/subdomains-top1million-5000.txt",
+      "bytes": 30075,
+      "sha256": "e331367c140298cb179114fdeefa78f58f696219f0dec017a28bb79487cfcf19"
+    },
+    "license": {
+      "path": "LICENSE",
+      "bytes": 1072,
+      "sha256": "3dbdc93d5f8829de0941744841730a09c106d0732e5ae0e98ca1d77be7ded66c"
+    }
+  }
+}

@@ -141,6 +141,16 @@ class PrioritySettings(StrictModel):
         return {**PRIORITY_WEIGHTS, **values}
 
 
+class DiscoverySettings(StrictModel):
+    enabled: bool = False
+    god_mode: bool = False
+    wordlists: list[str] = Field(default_factory=list, max_length=8)
+    exclude_wordlists: list[str] = Field(default_factory=list, max_length=32)
+    request_budget: int = Field(default=100, ge=0, le=2000)
+    max_entries: int = Field(default=500, ge=1, le=10000)
+    max_concurrent_jobs: int = Field(default=1, ge=1, le=2)
+
+
 class ScanConfig(StrictModel):
     version: Literal[1, 2] = 2
     scope: Scope
@@ -148,6 +158,10 @@ class ScanConfig(StrictModel):
     mode: Literal["standard", "passive", "offline", "demo"] = "standard"
     modules: list[str] = ["http", "crawl", "analysis", "checks"]
     tools: dict[str, str] = {}
+    workflow: Literal["scan", "blackbox"] = "scan"
+    graph: bool = True
+    report_formats: list[Literal["html", "json", "csv"]] = ["html", "json", "csv"]
+    execution_engines: dict[str, Literal["auto", "native"]] = {}
     strict_tools: bool = False
     local_inputs: list[str] = []
     provider_sources: dict[str, list[str]] = {"subfinder": ["crtsh"], "urlfinder": ["commoncrawl"]}
@@ -157,6 +171,7 @@ class ScanConfig(StrictModel):
     providers: ProviderSettings = Field(default_factory=ProviderSettings)
     grouping: GroupingSettings = Field(default_factory=GroupingSettings)
     priority: PrioritySettings = Field(default_factory=PrioritySettings)
+    discovery: DiscoverySettings = Field(default_factory=DiscoverySettings)
 
     @field_validator("selected_tools", mode="before")
     @classmethod
@@ -191,6 +206,14 @@ class ScanConfig(StrictModel):
             raise ValueError(f"Unknown modules: {sorted(set(values) - MODULES)}")
         return list(dict.fromkeys(values))
 
+    @field_validator("execution_engines")
+    @classmethod
+    def valid_engines(cls, values):
+        from .tool_registry import BY_NAME
+        if set(values) - BY_NAME.keys():
+            raise ValueError("Unknown capability in execution_engines")
+        return values
+
     @field_validator("tools")
     @classmethod
     def tool_names(cls, values: dict[str, str]) -> dict[str, str]:
@@ -206,6 +229,15 @@ class ScanConfig(StrictModel):
 
     def digest(self) -> str:
         data = self.model_dump()
+        # Old V1/V2/V3 manifests must remain verifiable when the new capability
+        # was not selected. No scope, budget or scoring migration is implicit.
+        for key, default in (("workflow", "scan"), ("graph", True), ("execution_engines", {}), ("report_formats", ["html", "json", "csv"])):
+            if data[key] == default:
+                data.pop(key)
+        if not self.discovery.exclude_wordlists:
+            data["discovery"].pop("exclude_wordlists")
+        if self.discovery == DiscoverySettings():
+            data.pop("discovery")
         if self.version == 1 and self.selected_tools is None and self.profile is None and not self.enrichments and self.providers == ProviderSettings() and self.grouping == GroupingSettings() and self.priority == PrioritySettings():
             for name in ("selected_tools", "profile", "enrichments", "providers", "grouping", "priority"):
                 data.pop(name)

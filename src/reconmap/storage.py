@@ -15,7 +15,7 @@ from urllib.parse import urlsplit
 
 from .config import ScanConfig, normalize_url
 
-SCHEMA = 3
+SCHEMA = 4
 POLICY_REVISION = 2
 
 
@@ -172,7 +172,7 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA trusted_schema=OFF")
         version = self.conn.execute("PRAGMA user_version").fetchone()[0]
-        if version not in (0, 1, 2, SCHEMA):
+        if version not in (0, 1, 2, 3, SCHEMA):
             self.conn.close()
             raise ValueError(f"Unsupported database schema {version}")
         self.schema = version
@@ -189,6 +189,10 @@ class Store:
             if version == 2:
                 from .schema_v3 import DDL as NEW_DDL
                 self.conn.executescript("BEGIN IMMEDIATE;\n" + NEW_DDL + "\nPRAGMA user_version=3;\nCOMMIT;")
+                version = 3
+            if version == 3:
+                from .schema_v4 import DDL as NEW_DDL
+                self.conn.executescript("BEGIN IMMEDIATE;\n" + NEW_DDL + "\nPRAGMA user_version=4;\nCOMMIT;")
             self.schema = SCHEMA
 
     def execute(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
@@ -201,11 +205,14 @@ class Store:
     def rows(self, table: str) -> list[dict]:
         from .schema_v2 import V2_TABLES
         from .schema_v3 import V3_TABLES
-        if table not in {"runs", "hosts", "dns", "origins", "urls", "observations", "parameters", "artifacts", "relationships", "findings", "stages", "jobs", "analyst_actions"} | V2_TABLES | V3_TABLES:
+        from .schema_v4 import V4_TABLES
+        if table not in {"runs", "hosts", "dns", "origins", "urls", "observations", "parameters", "artifacts", "relationships", "findings", "stages", "jobs", "analyst_actions"} | V2_TABLES | V3_TABLES | V4_TABLES:
             raise ValueError("Unknown table")
         if self.schema < 2 and table in V2_TABLES:
             return []
         if self.schema < 3 and table in V3_TABLES:
+            return []
+        if self.schema < 4 and table in V4_TABLES:
             return []
         rows = [dict(row) for row in self.conn.execute(f"SELECT * FROM {table}")]
         if table == "artifacts":
@@ -262,7 +269,7 @@ def read_manifest(run: Path) -> dict:
     if any((run / name).stat().st_size > 1024 * 1024 for name in ("manifest.json", "config.effective.json")):
         raise ValueError("Run metadata exceeds 1 MiB")
     manifest = json.loads((run / "manifest.json").read_text(encoding="utf-8"))
-    if not isinstance(manifest, dict) or manifest.get("schema") not in (1, 2, SCHEMA) or not re.fullmatch(r"[0-9a-f]{32}", str(manifest.get("run_id", ""))) or not isinstance(manifest.get("target"), str) or manifest.get("state") not in {"created", "running", "interrupted", "partial", "completed"}:
+    if not isinstance(manifest, dict) or manifest.get("schema") not in (1, 2, 3, SCHEMA) or not re.fullmatch(r"[0-9a-f]{32}", str(manifest.get("run_id", ""))) or not isinstance(manifest.get("target"), str) or manifest.get("state") not in {"created", "running", "interrupted", "partial", "completed"}:
         raise ValueError("Invalid or unsupported run manifest")
     config = ScanConfig.model_validate_json((run / "config.effective.json").read_text(encoding="utf-8"))
     if manifest.get("config_digest") != config.digest() or normalize_url(manifest["target"]) != manifest["target"] or urlsplit(manifest["target"]).hostname != manifest.get("host"):

@@ -1,0 +1,147 @@
+{
+  "execution_state": "partial",
+  "workflow": "blackbox",
+  "capability_coverage": [
+    {
+      "stage": "subdomain-discovery",
+      "selected_primary_tool": "subfinder",
+      "actual_execution_engines": [],
+      "status": "skipped",
+      "failure_reason": "Demo/offline/loopback lab does not contact discovery providers",
+      "coverage_limitations": []
+    },
+    {
+      "stage": "historical-discovery",
+      "selected_primary_tool": "urlfinder",
+      "actual_execution_engines": [],
+      "status": "skipped",
+      "failure_reason": "No archive-provider access in demo/offline/loopback lab",
+      "coverage_limitations": []
+    },
+    {
+      "stage": "dns-enumeration",
+      "selected_primary_tool": "dnsx",
+      "actual_execution_engines": [
+        "native-dns"
+      ],
+      "status": "partial",
+      "failure_reason": "Independent resolver retries/queries cannot be reserved in the shared DNS budget or restricted by a verified cross-platform egress sandbox",
+      "coverage_limitations": [
+        "Independent resolver retries/queries cannot be reserved in the shared DNS budget or restricted by a verified cross-platform egress sandbox"
+      ]
+    },
+    {
+      "stage": "javascript-analysis",
+      "selected_primary_tool": "jsluice",
+      "actual_execution_engines": [
+        "jsluice"
+      ],
+      "status": "completed",
+      "failure_reason": "",
+      "coverage_limitations": []
+    },
+    {
+      "stage": "secret-detection",
+      "selected_primary_tool": "gitleaks",
+      "actual_execution_engines": [
+        "gitleaks"
+      ],
+      "status": "completed",
+      "failure_reason": "",
+      "coverage_limitations": []
+    },
+    {
+      "stage": "http-probing",
+      "selected_primary_tool": "httpx",
+      "actual_execution_engines": [
+        "native-aiohttp"
+      ],
+      "status": "partial",
+      "failure_reason": "Independent DNS/connections bypass pinned public addresses and shared request/response limits; an HTTPS CONNECT proxy cannot enforce excluded paths",
+      "coverage_limitations": [
+        "Independent DNS/connections bypass pinned public addresses and shared request/response limits; an HTTPS CONNECT proxy cannot enforce excluded paths"
+      ]
+    },
+    {
+      "stage": "web-crawling",
+      "selected_primary_tool": "katana",
+      "actual_execution_engines": [
+        "native-html"
+      ],
+      "status": "partial",
+      "failure_reason": "Crawler subrequests cannot jointly enforce GET-only actions, excluded HTTPS paths, DNS pinning and shared remaining budgets without verified egress isolation",
+      "coverage_limitations": [
+        "Crawler subrequests cannot jointly enforce GET-only actions, excluded HTTPS paths, DNS pinning and shared remaining budgets without verified egress isolation"
+      ]
+    },
+    {
+      "stage": "exposure-checks",
+      "selected_primary_tool": "nuclei",
+      "actual_execution_engines": [
+        "native-reviewed-checks"
+      ],
+      "status": "partial",
+      "failure_reason": "Template allowlisting alone cannot pin subprocess destinations or account for every request, redirect and decompressed response; only native reviewed GET checks execute",
+      "coverage_limitations": [
+        "Template allowlisting alone cannot pin subprocess destinations or account for every request, redirect and decompressed response; only native reviewed GET checks execute"
+      ]
+    },
+    {
+      "stage": "content-discovery",
+      "selected_primary_tool": null,
+      "actual_execution_engines": [
+        "native-content-discovery"
+      ],
+      "status": "completed",
+      "failure_reason": "",
+      "coverage_limitations": []
+    }
+  ],
+  "nodes": 90,
+  "edges": 179,
+  "node_types": {
+    "webpage": 9,
+    "http_request": 26,
+    "static_resource": 2,
+    "investigation_candidate": 7,
+    "artifact": 9,
+    "api_endpoint": 6,
+    "form_action": 1,
+    "discovery_source": 12,
+    "path_group": 7,
+    "external_reference": 3,
+    "origin": 2,
+    "domain": 2,
+    "parameter": 2,
+    "exposure_candidate": 1,
+    "javascript_resource": 1
+  },
+  "edge_types": {
+    "has_request": 26,
+    "discovered_by": 57,
+    "has_evidence": 17,
+    "shares_origin": 24,
+    "contains_path": 29,
+    "has_candidate": 8,
+    "references_api": 8,
+    "links_to": 5,
+    "has_parameter": 2,
+    "submits_to": 1,
+    "redirects_to": 1,
+    "loads_script": 1
+  },
+  "hosts": 2,
+  "urls": 22,
+  "requests": 26,
+  "tested_urls": 17,
+  "api_candidates": 6,
+  "javascript_resources": 1,
+  "coverage_notes": [
+    "Path grouping is structural, not evidence of an existing directory.",
+    "Live-observed means an HTTP response was captured; redirects/errors/restrictions are not successful endpoint validation.",
+    "Inferred, historical and external references do not establish current reachability.",
+    "Resource nodes aggregate evidence; HTTP request nodes retain method, context and query identity.",
+    "At most 64 structural prefix groups per URL; original URLs and request identities are always retained.",
+    "No network requests are made to generate or view this map."
+  ]
+}

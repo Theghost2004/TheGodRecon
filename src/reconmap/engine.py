@@ -23,11 +23,16 @@ from .analysis import PageParser, analyze_js, analyze_map, basic_checks, js_stri
 from .config import ScanConfig, normalize_url, request_url
 from .scope import ScopePolicy
 from .security import redact, redact_data
+from .selectors import capability_enabled
 from .storage import POLICY_REVISION, SCHEMA, RunLock, Store, allocate_run, artifact_path, atomic_json, read_manifest, timestamp
 from . import __version__
 
 
 class BudgetStop(Exception):
+    pass
+
+
+class DiscoveryBudgetStop(BudgetStop):
     pass
 
 
@@ -68,8 +73,17 @@ class Scheduler:
                 raise BudgetStop("Retry-After/rate wait exceeds remaining run time")
             await asyncio.sleep(delay)
         self.check_time()
-        # Persist before sending, so a killed process cannot forget a consumed request.
-        self.store.set_meta("requests", count + 1)
+        from .content_discovery import job_key, request_cap
+        dictionary_request = self.store.meta(job_key(url), False)
+        discovery_count = int(self.store.meta("wordlist_requests", 0))
+        if dictionary_request and discovery_count >= request_cap(self.config):
+            raise DiscoveryBudgetStop("content discovery request cap reached")
+        # Both reservations commit together before sending; cancellation cannot
+        # forget a dictionary request while remembering only the global one.
+        with self.store.conn:
+            self.store.conn.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("requests", json.dumps(count+1)))
+            if dictionary_request:
+                self.store.conn.execute("INSERT OR REPLACE INTO meta VALUES(?,?)", ("wordlist_requests", json.dumps(discovery_count+1)))
         self.next_global = time.monotonic() + 1 / self.config.budgets.overall_rps
         self.next_host[host] = time.monotonic() + 1 / self.config.budgets.per_host_rps
 
@@ -222,6 +236,8 @@ class Scanner:
             "tool_executions": "length(identity_json)+length(detail)+500",
             "stage_results": "length(result_json)+500",
             "normalized_records": "length(data)+500",
+            "graph_nodes": "length(data)+500",
+            "graph_edges": "length(data)+500",
             "investigation_candidates": "length(data)+500",
         }.items():
             metadata += self.store.conn.execute(f"SELECT COALESCE(SUM({fields}),0) FROM {table}").fetchone()[0]
@@ -243,7 +259,12 @@ class Scanner:
         if not allowed:
             state = "external-reference"
         self.store.execute("INSERT OR IGNORE INTO urls(url,grouping_key,source,state,depth) VALUES(?,?,?,?,?)", (url, url, source, state, depth))
-        self.store.observed(url, "discovery", {"allowed": allowed, "reason": reason, "parent": parent, "original_url": candidate}, source, identity=hashlib.sha256(f"{url}:{source}:{parent}:{candidate}".encode()).hexdigest())
+        provenance = {"allowed": allowed, "reason": reason, "parent": parent, "original_url": candidate}
+        parent_body = self.store.conn.execute("SELECT hash FROM urls WHERE url=?", (parent,)).fetchone() if parent.startswith(("http://", "https://")) else None
+        source_hash = parent.removeprefix("artifact:") if parent.startswith("artifact:") else parent_body[0] if parent_body else None
+        if source_hash and re.fullmatch(r"[0-9a-f]{64}", source_hash):
+            provenance["hash"] = source_hash
+        self.store.observed(url, "discovery", provenance, source, identity=hashlib.sha256(f"{url}:{source}:{parent}:{candidate}:{source_hash or ''}".encode()).hexdigest())
         if parent:
             self.store.relate(parent, url, source, source)
         for name, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True):
@@ -253,22 +274,36 @@ class Scanner:
             return
         self.store.execute("INSERT OR IGNORE INTO hosts VALUES(?,?,?)", (host, "untested", timestamp()))
         if not fetch or self.config.mode in {"passive", "offline"} or "http" not in self.config.modules:
+            self.store.observed(url, "scheduling-decision", {"reason": "observation only / network capability not selected", "fetch_requested": fetch}, "scheduler", identity="schedule-observe:"+url+":"+str(fetch))
             return
         if depth > self.config.budgets.depth:
             if not self.store.conn.execute("SELECT 1 FROM jobs WHERE url=?", (request_url(url),)).fetchone():
                 self.limit("crawl depth cap reached")
+                self.store.observed(url,"scheduling-filter",{"reason":"depth limit","depth":depth},"scheduler",identity="depth:"+url)
             return
         wire_url = request_url(url)
+        # Do not permanently lose a route found by a deeper path before its
+        # shallower reference. Completed requests are never repeated.
+        self.store.execute("UPDATE jobs SET depth=MIN(depth,?) WHERE url=?", (depth, wire_url))
         if self.store.conn.execute("SELECT COUNT(*) FROM jobs").fetchone()[0] >= self.config.budgets.requests and not self.store.conn.execute("SELECT 1 FROM jobs WHERE url=?", (wire_url,)).fetchone():
             self.limit("global job queue cap reached; unscheduled discoveries retained")
+            self.store.observed(url,"scheduling-filter",{"reason":"queue cap"},"scheduler",identity="queue-cap:"+url)
             return
         host_count = sum(urlsplit(row[0]).hostname == host for row in self.store.conn.execute("SELECT url FROM jobs"))
         if host_count >= self.config.budgets.urls_per_host and not self.store.conn.execute("SELECT 1 FROM jobs WHERE url=?", (wire_url,)).fetchone():
             self.limit("per-host URL cap reached")
+            self.store.observed(url,"scheduling-filter",{"reason":"host quota"},"scheduler",identity="host-quota:"+url)
             return
         if re.search(r"\.(?:png|jpg|jpeg|gif|webp|mp4|mp3|woff2?|ico|pdf|zip|tar|gz)(?:$|\?)", wire_url, re.I):
             self.store.observed(url, "scheduling-filter", {"reason": "static/bulk media; preserved as observation"}, "scheduler")
             return
+        from .content_discovery import job_key
+        # Descendants of dictionary probes retain their sub-budget on resume,
+        # including redirects and JavaScript/source-map references.
+        parents = [parent] if parent.startswith(("http://", "https://")) else [r[0] for r in self.store.conn.execute("SELECT parent FROM relationships WHERE child=? AND kind='response_body'", (parent,)) if r[0].startswith(("http://", "https://"))]
+        existing_job = self.store.conn.execute("SELECT 1 FROM jobs WHERE url=?", (wire_url,)).fetchone()
+        if not existing_job and any(self.store.meta(job_key(p), False) for p in parents):
+            self.store.set_meta(job_key(wire_url), True)
         self.store.execute("INSERT OR IGNORE INTO jobs(url,depth,source,state) VALUES(?,?,?,'queued')", (wire_url, depth, source))
 
     def add_reference(self, base: str, reference: str, source: str, depth: int) -> None:
@@ -343,25 +378,32 @@ class Scanner:
         if "checks" in self.config.modules:
             basic_checks(self.store, url, text, response.headers, digest, response.status)
         if "analysis" in self.config.modules:
-            if "gitleaks" not in self.config.modules:
+            if capability_enabled(self.config, "gitleaks") and "gitleaks" not in self.config.modules:
                 secrets(self.store, text, digest, "native", self.config.mode == "demo")
             refs = []
-            if "jsluice" not in self.config.modules:
+            if capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
                 refs = analyze_js(self.store, text, url, digest, self.config.mode == "demo", scan_secrets=False) if kind == "js" else analyze_map(self.store, text, url, digest, self.config.budgets.response_bytes, self.config.mode == "demo", scan_secrets=False) if kind == "map" else []
             for candidate, provenance in refs:
                 self.add_url(candidate, provenance, "artifact:" + digest, depth+1, fetch=provenance != "inferred_endpoint_non_get")
-            for inline in parser.inline:
+            for inline in parser.inline if capability_enabled(self.config, "jsluice") else []:
                 inline_hash = self.save_artifact(inline.encode(), "js", url)
                 if "jsluice" in self.config.modules:
                     continue
                 for candidate, provenance in analyze_js(self.store, inline, url, inline_hash, self.config.mode == "demo", scan_secrets=False):
                     self.add_url(candidate, provenance, "artifact:" + inline_hash, depth+1, fetch=provenance != "inferred_endpoint_non_get")
+                self.store.execute("UPDATE artifacts SET analyzed=1 WHERE hash=?", (inline_hash,))
             for comment in parser.comments:
                 self.store.observed(url, "html-comment", {"excerpt": redact(comment[:1000]), "hash": digest}, "native")
             self.store.execute("UPDATE artifacts SET analyzed=1 WHERE hash=?", (digest,))
+        reference_base = url
+        if parser.base_href:
+            try:
+                reference_base = normalize_url(urljoin(url, parser.base_href))
+            except ValueError:
+                self.store.observed(url, "invalid_reference", {"reason": "Malformed HTML base"}, "native")
         for form in parser.forms:
             try:
-                action = normalize_url(urljoin(url, form["action"]))
+                action = normalize_url(urljoin(reference_base, form["action"]))
             except ValueError:
                 self.store.observed(url, "invalid_reference", {"reason": "Malformed form action"}, "native")
                 continue
@@ -371,18 +413,28 @@ class Scanner:
                 self.store.execute("INSERT OR IGNORE INTO parameters VALUES(?,?,?,?)", (action, name, "form", "native"))
         if "crawl" in self.config.modules:
             for candidate, provenance in parser.references:
-                self.add_reference(url, candidate, provenance, depth+1)
+                try:
+                    self.add_url(urljoin(reference_base, candidate), provenance, url, depth+1)
+                except ValueError:
+                    self.store.observed(url, "invalid_reference", {"reason": "Malformed HTML reference"}, "native")
             if urlsplit(url).path == "/robots.txt":
                 for line in text.splitlines():
                     if line.lower().startswith("sitemap:"):
                         self.add_reference(url, line.split(":",1)[1].strip(), "robots-sitemap", depth+1)
-            if urlsplit(url).path.endswith(".xml") and "<urlset" in text:
+            if ("<urlset" in text or "<sitemapindex" in text) and ("xml" in content_type or urlsplit(url).path.endswith(".xml")):
                 import xml.etree.ElementTree as ET
                 try:
+                    if re.search(r"<!\s*(?:DOCTYPE|ENTITY)\b", text, re.I):
+                        raise ET.ParseError("DTD/entity declarations are not accepted in sitemaps")
                     root = ET.fromstring(text)
+                    locations = 0
                     for node in root.iter():
                         if node.tag.rsplit("}",1)[-1] == "loc" and node.text:
-                            self.add_url(node.text.strip(), "sitemap", url, depth+1)
+                            if locations >= 10000:
+                                self.limit("sitemap reference cap reached")
+                                break
+                            locations += 1
+                            self.add_reference(url, node.text.strip(), "sitemap", depth+1)
                 except ET.ParseError as exc:
                     self.store.observed(url, "parse_error", {"error": str(exc)}, "sitemap")
         # A bounded 200 baseline gives a similarity hint, never erases observations.
@@ -411,14 +463,16 @@ class Scanner:
                 kind = "map" if path.suffix == ".map" else "js" if path.suffix == ".js" else "content"
                 digest = self.save_artifact(body, kind, "local-input")
                 text = body.decode(errors="replace")
-                if "gitleaks" not in self.config.modules:
+                if capability_enabled(self.config, "gitleaks") and "gitleaks" not in self.config.modules:
                     secrets(self.store, text, digest, "local-input", self.config.mode == "demo")
-                if kind == "js" and "jsluice" not in self.config.modules:
+                if kind == "js" and capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
                     for url, provenance in analyze_js(self.store, text, self.manifest["target"], digest, self.config.mode == "demo", scan_secrets=False):
                         self.add_url(url, provenance, "artifact:" + digest, fetch=provenance != "inferred_endpoint_non_get")
-                elif kind == "map" and "jsluice" not in self.config.modules:
+                elif kind == "map" and capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
                     for url, provenance in analyze_map(self.store, text, self.manifest["target"], digest, self.config.budgets.response_bytes, self.config.mode == "demo", scan_secrets=False):
                         self.add_url(url, provenance, "artifact:" + digest, fetch=provenance != "inferred_endpoint_non_get")
+                if capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
+                    self.store.execute("UPDATE artifacts SET analyzed=1 WHERE hash=?", (digest,))
                 self.store.set_meta(key, digest)
             except (OSError, ValueError) as exc:
                 self.store.stage("local-inputs", "partial", str(exc))
@@ -461,6 +515,11 @@ class Scanner:
                             continue
                         self.store.stage("http", "partial", "Retry limit reached for throttled/server-error responses; see HTTP observations")
                     self.store.execute("UPDATE jobs SET state='completed' WHERE url=?", (url,))
+                    break
+                except DiscoveryBudgetStop as exc:
+                    self.store.execute("UPDATE jobs SET state='deferred' WHERE url=?", (url,))
+                    self.store.observed(url, "scheduling-filter", {"reason": str(exc)}, "scheduler", identity="discovery-budget:"+url)
+                    self.store.stage("content-discovery", "partial", str(exc))
                     break
                 except (aiohttp.ClientError, OSError, ValueError, TimeoutError, zlib.error) as exc:
                     self.store.observed(url, "request_error", {"error": redact(str(exc)), "attempt": attempt}, "native", identity=f"error:{url}:{attempt}")
