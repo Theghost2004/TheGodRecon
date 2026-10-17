@@ -150,6 +150,7 @@ def analyze_reused(scanner):
     if not scanner.store.meta("reanalyze-artifacts") or "analysis" not in scanner.config.modules:
         return
     from .analysis import analyze_js, analyze_map, secrets
+    from .selectors import capability_enabled
     synthetic = scanner.manifest.get("synthetic", False)
     for artifact in scanner.store.rows("artifacts"):
         if artifact["analyzed"]:
@@ -159,11 +160,11 @@ def analyze_reused(scanner):
         if len(body) > scanner.config.budgets.response_bytes:
             raise ConfigError("Reused artifact exceeds analysis cap")
         text = body.decode(errors="replace")
-        if "gitleaks" not in scanner.config.modules:
+        if capability_enabled(scanner.config, "gitleaks") and "gitleaks" not in scanner.config.modules:
             secrets(scanner.store, text, artifact["hash"], "reanalysis", synthetic)
         bases = [r[0] for r in scanner.store.conn.execute("SELECT parent FROM relationships WHERE child=? AND kind='response_body'", ("artifact:" + artifact["hash"],)) if r[0].startswith(("http://", "https://"))] or [scanner.manifest["target"]]
         for base in bases:
-            if "jsluice" in scanner.config.modules:
+            if not capability_enabled(scanner.config, "jsluice") or "jsluice" in scanner.config.modules:
                 continue
             refs = analyze_js(scanner.store, text, base, artifact["hash"], synthetic, scan_secrets=False) if artifact["kind"] == "js" else analyze_map(scanner.store, text, base, artifact["hash"], scanner.config.budgets.response_bytes, synthetic, scan_secrets=False) if artifact["kind"] == "map" else []
             for url, provenance in refs:

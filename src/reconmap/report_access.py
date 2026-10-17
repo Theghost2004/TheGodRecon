@@ -85,10 +85,19 @@ def finish_run(run: Path, state: str, *, prompt=True):
     try:
         summary = json.loads((run/'reports/investigation.json').read_text(encoding='utf-8'))['summary']
         print(f'Results: {summary["discovered_assets"]} URLs | High interest: {summary["high_interest"]} | Manual review: {summary["manual_review"]}')
-        report = valid_report(run)
+        report = valid_report(run) if (run/"reports/index.html").exists() else (run/"reports/investigation.json").resolve()
     except (OSError, ValueError, KeyError, sqlite3.Error):
         print('Report incomplete. Preserve the run and use reconmap report --run PATH to regenerate.')
         return
+    graph = summary.get('graph', {})
+    print('BLACKBOX RECON FINISHED' if summary.get('workflow') == 'blackbox' else 'SCAN FINISHED')
+    print('Execution: ' + state + ' | Selected tools: ' + (', '.join(summary.get('selected_tools',[])) or 'native modules'))
+    if graph:
+        print(f'Discovered hosts: {graph["hosts"]} | Discovered URLs: {graph["urls"]} | Tested URLs: {graph["tested_urls"]}')
+        print(f'API candidates: {graph["api_candidates"]} | JavaScript resources: {graph["javascript_resources"]}')
+        print(f'Graph nodes: {graph["nodes"]} | Graph relationships: {graph["edges"]}')
+        print(f'Endpoint tree: {(run/"graph/endpoint-tree.txt").resolve()}')
+        print(f'Interactive asset map: {(run/"graph/asset-map.html").resolve()}')
     print(f'Report: {report}')
     if state == 'interrupted':
         print(f'Resume: reconmap resume "{run.resolve()}"')
@@ -96,7 +105,12 @@ def finish_run(run: Path, state: str, *, prompt=True):
     should_open = bool(settings and settings.auto_open)
     if not should_open and prompt and sys.stdin.isatty() and sys.stdout.isatty():
         try:
-            should_open = input('Open report now? [Y/n] ').strip().lower() in {'', 'y', 'yes'}
+            answer = input('Open report or asset map? [R/m/n] ' if graph else 'Open report now? [Y/n] ').strip().lower()
+            if graph and answer in {'m','map'}:
+                report = (run/'graph/asset-map.html').resolve()
+                should_open = True
+            else:
+                should_open = answer in {'','y','yes','r','report'}
         except (EOFError, KeyboardInterrupt):
             return
     if should_open:

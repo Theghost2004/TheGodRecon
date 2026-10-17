@@ -84,6 +84,9 @@ def resolve_selection(config: ScanConfig, *, tools=None, profile=None, enrich=No
         if name in BY_NAME:
             data["modules"].extend(BY_NAME[name].fallback)
     data["modules"] = list(dict.fromkeys(data["modules"]))
+    if data.get("selected_tools"):
+        if "httpx" not in data["selected_tools"]:
+            data["modules"] = [m for m in data["modules"] if m not in {"http", "crawl", "checks"}]
     if mode is not None:
         data["mode"] = mode
     if enrich is not None:
@@ -97,3 +100,17 @@ def resolve_selection(config: ScanConfig, *, tools=None, profile=None, enrich=No
     if tools is not None or profile is not None or enrich is not None or modules is not None or mode is not None:
         data["version"] = 2
     return ScanConfig.model_validate(data)
+
+
+def capability_enabled(config, name):
+    """Explicit numbered selection restricts fallbacks as well as executables.
+
+    HTTP transport DNS validation is a safety prerequisite, not DNS enumeration.
+    Legacy native module selections retain their original behavior.
+    """
+    if config.selected_tools:  # [] is also used by the existing standard native profile
+        return name in config.selected_tools
+    if config.selected_tools == [] and not config.modules:
+        return False
+    native = {"dnsx":"dns", "httpx":"http", "katana":"crawl", "jsluice":"analysis", "gitleaks":"analysis", "nuclei":"checks"}
+    return name in config.modules or native.get(name) in config.modules

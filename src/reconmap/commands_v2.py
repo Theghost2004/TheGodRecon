@@ -1,4 +1,5 @@
 """Additional CLI commands; the existing CLI remains the entry point."""
+import argparse
 import json
 from pathlib import Path
 
@@ -23,6 +24,13 @@ def add_scan_arguments(parser, *, rerun=False):
     parser.add_argument("--mode", choices=["standard", "passive", "offline", "demo"])
     parser.add_argument("--profile", choices=["standard", "passive", "offline", "full"])
     parser.add_argument("--tools", help="IDs/names/ranges/presets: 1,3-5,offline or all; replaces module selection")
+    parser.add_argument("--exclude-tools", help="Exclude IDs/names from --tools, or from all eight when used alone")
+    parser.add_argument("--formats", help="Report formats: html,json,csv (default all); SQLite and canonical JSON remain available")
+    parser.add_argument("--provider-source", action="append", default=[], metavar="TOOL=SOURCE", help="Reviewed passive provider selection (repeatable); equivalent to provider_sources YAML")
+    parser.add_argument("--engine", action="append", default=[], metavar="TOOL=auto|native", help="auto prefers verified external execution; native never invokes that executable")
+    parser.add_argument("--auto-wordlists", action="store_true", help="Enable bounded evidence-driven dictionary selection")
+    parser.add_argument("--exclude-wordlist", action="append", default=[], help="Exclude a catalog name or exact custom dictionary path")
+    parser.add_argument("--graph", action=argparse.BooleanOptionalAction, default=None, help="Generate endpoint tree and offline asset map (default enabled)")
     parser.add_argument("--all-tool", "--all-tools", action="store_true", help="Select all eight capabilities; safety blocks remain")
     presets = parser.add_mutually_exclusive_group()
     presets.add_argument("--preset", choices=["quick", "standard", "deep"])
@@ -93,7 +101,8 @@ def handle(args):
         target = args.target or (read_manifest(args.resume)["target"] if args.resume else None)
         if not target:
             raise ConfigError("Plan requires --target or --resume")
-        tools = {n: identify(n, config.tools.get(n)) for n in selected_names(config)}
+        from .cli import identify_selected
+        tools = {n: identify_selected(config, n) for n in selected_names(config)}
         plan = build_plan(config, target, tools)
         preview = redact_data(plan)
         print(json.dumps(preview, indent=2)) if args.json else print_plan(preview)

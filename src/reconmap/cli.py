@@ -66,6 +66,8 @@ def parser() -> Parser:
     init.add_argument("--lab",action="store_true",help="Separate loopback-only lab network policy")
     scan=commands.add_parser("scan",help="New scoped scan or resume an unchanged run")
     add_scan_arguments(scan)
+    blackbox=commands.add_parser("blackbox",help="Complete eight-capability reconnaissance with endpoint tree and asset map")
+    add_scan_arguments(blackbox)
     register(commands, Parser)
     report=commands.add_parser("report",help="Regenerate local redacted exports and HTML")
     report.add_argument("--run",type=Path)
@@ -111,7 +113,14 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
         if args.tools is not None or args.modules is not None or args.profile is not None:
             raise ConfigError("--all-tool cannot be combined with --tools, --modules or --profile")
         args.tools = "all"
-    god_mode = getattr(args, "god_mode", False)
+    blackbox = args.command == "blackbox"
+    god_mode = getattr(args, "god_mode", False) or blackbox
+    if god_mode and args.exclude_tools:
+        raise ConfigError("BlackBox selects all eight capabilities; use scan --tools/--exclude-tools for customization")
+    if blackbox and args.graph is False:
+        raise ConfigError("BlackBox always generates its endpoint map; use scan --no-graph for a customized scan")
+    if getattr(args, "god_mode", False) and not blackbox:
+        print("Compatibility alias: use reconmap blackbox TARGET for comprehensive reconnaissance.", file=sys.stderr)
     if god_mode and (args.all_tool or args.tools is not None or args.modules is not None or args.profile is not None or args.preset is not None):
         raise ConfigError("--god-mode/--full-coverage selects a complete profile; do not combine with --all-tool, --tools, --modules, --profile or --preset")
     if god_mode and args.resume and args.command != "rerun":
@@ -136,10 +145,53 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
     choices = {name: getattr(args, name, None) for name in ("tools", "profile", "enrich", "modules", "mode")}
     if not args.resume or args.config is not None or any(value is not None for value in choices.values()):
         config = resolve_selection(config, **choices)
+    if args.exclude_tools:
+        from .selectors import select_tools, tool_modules
+        excluded = set(select_tools(args.exclude_tools))
+        engines = dict(config.execution_engines)
+        if args.tools is not None or config.selected_tools:
+            selected = config.selected_tools or []
+        elif args.config or args.profile:
+            from .selectors import capability_enabled
+            selected = [n for n in select_tools("all") if capability_enabled(config, n)]
+            # Excluding a capability never turns an existing native YAML module
+            # into permission to execute an additional external binary.
+            engines.update({n:"native" for n in selected if n not in config.modules})
+        else:
+            selected = select_tools("all")
+        selected = [n for n in selected if n not in excluded]
+        config = config.model_copy(update={"selected_tools": selected, "modules": tool_modules(selected), "profile": None, "execution_engines": engines})
+        config = resolve_selection(config)
     if god_mode:
         from .presets import apply_god_mode
         config = apply_god_mode(config, defaults=not args.config and not args.resume)
     data=config.model_dump()
+    if god_mode:
+        data["workflow"] = "blackbox"
+        data["graph"] = True
+    if args.formats is not None:
+        data["report_formats"] = list(dict.fromkeys(args.formats.split(",")))
+        if god_mode and set(data["report_formats"]) != {"html","json","csv"}:
+            raise ConfigError("BlackBox produces all report formats; use scan to customize exports")
+    chosen_sources = {}
+    for option in args.provider_source:
+        name, sep, source = option.partition("=")
+        if not sep:
+            raise ConfigError("Provider source uses TOOL=SOURCE from the reviewed allowlist")
+        chosen_sources.setdefault(name, []).append(source)
+    data["provider_sources"].update(chosen_sources)
+    if args.graph is not None:
+        data["graph"] = args.graph
+    if args.auto_wordlists:
+        data["discovery"]["enabled"] = True
+    data["discovery"]["exclude_wordlists"].extend(args.exclude_wordlist)
+    if args.wordlist:
+        data["discovery"]["wordlists"] = []  # explicit CLI lists replace YAML/automatic choices
+    for option in args.engine:
+        name, sep, value = option.partition("=")
+        if not sep:
+            raise ConfigError("Execution preference uses TOOL=auto or TOOL=native")
+        data["execution_engines"][name] = value
     for path in args.wordlist:
         from .wordlists import load_dictionary
         load_dictionary(path, config.discovery.max_entries)
@@ -165,12 +217,19 @@ def effective_config(args: argparse.Namespace) -> ScanConfig:
     return ScanConfig.model_validate(data)
 
 
+def identify_selected(config, name):
+    if config.execution_engines.get(name) == "native":
+        from .adapters import ToolInfo
+        return ToolInfo(name, None, "not checked (native selected)", None, False, False, CAPABILITIES[name], "Native engine explicitly selected; executable not inspected or invoked")
+    return identify(name, config.tools.get(name))
+
+
 def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path | None = None, baseline: Path | None = None, break_lock: bool = False, initialize=None, no_progress=False, preset=None) -> int:
     if baseline:
         read_manifest(baseline)
-    tools={name:identify(name,config.tools.get(name)) for name in config.modules if name in PINS}
+    tools={name:identify_selected(config, name) for name in config.modules if name in PINS}
     if config.strict_tools:
-        missing=[name for name,info in tools.items() if not info.supported and not ((config.mode=="demo" or config.scope.lab) and name in {"subfinder","urlfinder"})]
+        missing=[name for name,info in tools.items() if config.execution_engines.get(name) != "native" and not info.supported and not ((config.mode=="demo" or config.scope.lab) and name in {"subfinder","urlfinder"})]
         if missing:
             print("Dependency preflight failed: "+", ".join(missing)+". Run reconmap doctor.",file=sys.stderr)
             return 4
@@ -195,6 +254,8 @@ def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path 
                     raise ConfigError(f"Tool identity changed for {name}; start a new run to preserve provenance")
         import importlib.metadata
         atomic_json(saved_path,{"engine":__version__,"python":sys.version.split()[0],"external":current,"libraries":{n:importlib.metadata.version(n) for n in ("aiohttp","pydantic","tree-sitter","tree-sitter-javascript")},"template_profile":"reconmap-exposure-v1 (native, no upstream template execution)","traffic_accounting":"Target HTTP and owned RIPE/CDX reservations are separate measured counters; external Subfinder/URLFinder provider counts remain unknown"})
+        from .environment import diagnostics
+        atomic_json(path/"environment.json", diagnostics(tools))
         previous=signal.getsignal(signal.SIGTERM)
         signal.signal(signal.SIGTERM,lambda *unused: (_ for _ in ()).throw(KeyboardInterrupt()))
         try:
@@ -278,11 +339,11 @@ def main(argv: list[str] | None = None) -> int:
                 yaml.safe_dump(config.model_dump(),f,sort_keys=False)
             print(f"Editable exact-host scope saved: {args.config.absolute()}")
             return 0
-        if args.command=="scan":
+        if args.command in {"scan", "blackbox"}:
             config=effective_config(args)
             from .settings import load_settings
             return run(config,args.target,args.output_root,args.resume,args.baseline,args.break_lock,
-                       no_progress=args.no_progress,preset=("GOD MODE" if config.discovery.god_mode else args.preset) or ("YAML" if args.config else "saved run" if args.resume else load_settings().preset))
+                       no_progress=args.no_progress,preset=("BLACKBOX" if config.workflow == "blackbox" or config.discovery.god_mode else args.preset) or ("YAML" if args.config else "saved run" if args.resume else load_settings().preset))
         if args.command=="demo":
             config=default_config("example.com")
             config.mode="demo"

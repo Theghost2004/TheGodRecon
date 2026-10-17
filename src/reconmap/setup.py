@@ -27,10 +27,11 @@ def health(overrides=None) -> dict:
             libraries[distribution] = {'available': False, 'version': 'missing'}
     from .wordlists import locate
     records = doctor(overrides)
+    from .environment import diagnostics
     return {'version': __version__, 'python': platform.python_version(), 'platform': platform.system(), 'architecture': platform.machine(),
             'core': 'available' if sys.version_info >= (3, 12) and all(v['available'] for v in libraries.values()) else 'incomplete',
             'libraries': libraries, 'tools': {n: {**i.record(), 'status': execution_status(i)} for n, i in records.items()},
-            'optional_tools': 'ready' if all(i.compatible for i in records.values()) else 'partial', 'wordlists': locate()}
+            'environment': diagnostics(records), 'optional_tools': 'ready' if all(i.compatible for i in records.values()) else 'partial', 'wordlists': locate()}
 
 
 def print_health(data):
@@ -43,6 +44,8 @@ def print_health(data):
         print(f"  {row['path'] or '(not found)'} | fallback: {fallback}")
         if not row['supported']:
             print('  ' + row['reason'])
+    environment = data.get("environment", {})
+    print(f"Environment: user {environment.get('user', 'unknown')}; UID {environment.get('effective_uid')}; active external containment unverified")
     from .wordlists import summary
     summary(data.get("wordlists"))
     print(f"Overall: Core {data['core']}; optional tools {data['optional_tools']}. Native fallbacks retain scope and budgets.")

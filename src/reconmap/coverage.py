@@ -68,7 +68,10 @@ def summarize(store):
     # Native-only analysis has no external-tool checkpoint; its artifact flag is
     # written after native analysis, but must not represent selected-tool work.
     config = store.meta('config',{})
-    if 'jsluice' not in config.get('modules',[]):
+    from .config import ScanConfig
+    from .selectors import capability_enabled
+    js_selected = capability_enabled(ScanConfig.model_validate(config), 'jsluice') if config.get('scope') else 'analysis' in config.get('modules',[])
+    if js_selected and 'jsluice' not in config.get('modules',[]):
         processed |= {a['hash'] for a in store.rows('artifacts') if a['analyzed'] and a['hash'] in artifacts}
     javascript = {'captured_artifacts':len(artifacts), 'processed_artifacts':len(processed & artifacts),
                   'unprocessed_artifacts':len(artifacts-processed),
@@ -77,13 +80,48 @@ def summarize(store):
                   'inferred_records':sum(r['kind']=='inferred_endpoint' for r in observations),
                   'unresolved_expressions':sum(r['kind']=='unresolved_expression' for r in observations),
                   'details':analyses}
+    js_urls = {r['url'] for r in store.rows('urls') if r['url'].split('?',1)[0].lower().endswith(('.js','.mjs','.map')) or 'javascript' in (r['content_type'] or '')}
+    inferred = [r for r in observations if r['kind']=='inferred_endpoint']
+    javascript.update(files_discovered=len(js_urls), files_fetched=len(js_urls & {r['subject'] for r in http}),
+        files_analyzed=len(processed & artifacts), files_skipped=len(artifacts-processed) if not js_selected else 0,
+        files_failed=len({r['hash'] for r in analyses if not r.get('processed')}),
+        duplicates_correlated=len(inferred)-len({(r['subject'],json.loads(r['data']).get('method')) for r in inferred}),
+        out_of_scope_references=len({r['subject'] for r in observations if r['kind']=='discovery' and r['source'] in {'jsluice','inferred_endpoint','inferred_endpoint_non_get'} and not json.loads(r['data']).get('allowed',False)}),
+        selection='selected' if js_selected else 'not-selected')
     results = {r['name']:json.loads(r['result_json']) for r in store.rows('stage_results')}
     tools = []
-    for selected in store.rows('tool_executions'):
-        name=selected['name']; result=results.get(STAGE_NAMES[name],{})
+    registered = {r['name']:r for r in store.rows('tool_executions')}
+    for name in BY_NAME:
+        result=results.get(STAGE_NAMES[name],{})
+        selected = name in registered or bool(result.get('actual_execution_engines'))
+        if not selected:
+            tools.append({'tool':name, 'selected':False, 'installed':None, 'compatible':None, 'direct_execution_permitted':False,
+                'actually_ran':False, 'primary_status':'not-selected', 'coverage_status':'not-selected', 'engines':[],
+                'native_fallbacks':[], 'records':0, 'inputs_processed':0, 'duration_seconds':0, 'reason':'Capability not selected; executable not inspected',
+                'limitations':[], 'native_capability_and_limits':NATIVE_COVERAGE[name], 'version':None, 'executable':None, 'sha256':None, 'input_artifacts':[], 'output_artifacts':[]})
+            continue
         info=result.get('tool_identity',{})
         engines=result.get('actual_execution_engines',[])
-        tools.append({'tool':name,'installed':info.get('available',False),'compatible':info.get('compatible',False),
+        processed_count, processed_unit = 0, 'inputs'
+        if engines:
+            if name in {'httpx','katana','nuclei'}:
+                processed_count, processed_unit = len(http), 'HTTP observations (shared collection)'
+            elif name == 'dnsx':
+                processed_count, processed_unit = len({r['host'] for r in store.rows('dns')}), 'hosts with DNS observations'
+            elif name == 'jsluice':
+                processed_count, processed_unit = len(processed & artifacts), 'JavaScript/source-map artifacts'
+            elif name == 'gitleaks':
+                analyzed = {json.loads(r['data'])['hash'] for r in observations if r['kind']=='artifact-analysis' and r['source']=='gitleaks' and json.loads(r['data']).get('processed')}
+                if name not in config.get('modules',[]):
+                    analyzed |= {r['hash'] for r in store.rows('artifacts') if r['analyzed']}
+                processed_count, processed_unit = len(analyzed), 'captured artifacts'
+            else:
+                processed_count, processed_unit = store.meta('invocations:'+name,0), 'seed invocations'
+        native_selected = config.get('execution_engines',{}).get(name) == 'native'
+        tools.append({'tool':name,'selected':True,'installed':None if native_selected or not info else info.get('available',False),'compatible':None if native_selected or not info else info.get('compatible',False),
+            'adapter': 'native' if native_selected else name, 'execution_preference':config.get('execution_engines',{}).get(name,'auto'),
+            'input_artifacts':result.get('input_artifacts',[]), 'output_artifacts':result.get('output_artifacts',[]),
+            'inputs_processed':processed_count, 'input_unit':processed_unit,
             'direct_execution_permitted':bool(info.get('supported')) and not BY_NAME[name].policy_reason,
             'actually_ran':bool(store.meta('executed:'+name, name in engines)), 'primary_status':result.get('primary_status','pending'),
             'coverage_status':result.get('status','pending'), 'engines':engines,

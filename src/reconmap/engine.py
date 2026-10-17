@@ -23,6 +23,7 @@ from .analysis import PageParser, analyze_js, analyze_map, basic_checks, js_stri
 from .config import ScanConfig, normalize_url, request_url
 from .scope import ScopePolicy
 from .security import redact, redact_data
+from .selectors import capability_enabled
 from .storage import POLICY_REVISION, SCHEMA, RunLock, Store, allocate_run, artifact_path, atomic_json, read_manifest, timestamp
 from . import __version__
 
@@ -235,6 +236,8 @@ class Scanner:
             "tool_executions": "length(identity_json)+length(detail)+500",
             "stage_results": "length(result_json)+500",
             "normalized_records": "length(data)+500",
+            "graph_nodes": "length(data)+500",
+            "graph_edges": "length(data)+500",
             "investigation_candidates": "length(data)+500",
         }.items():
             metadata += self.store.conn.execute(f"SELECT COALESCE(SUM({fields}),0) FROM {table}").fetchone()[0]
@@ -256,7 +259,12 @@ class Scanner:
         if not allowed:
             state = "external-reference"
         self.store.execute("INSERT OR IGNORE INTO urls(url,grouping_key,source,state,depth) VALUES(?,?,?,?,?)", (url, url, source, state, depth))
-        self.store.observed(url, "discovery", {"allowed": allowed, "reason": reason, "parent": parent, "original_url": candidate}, source, identity=hashlib.sha256(f"{url}:{source}:{parent}:{candidate}".encode()).hexdigest())
+        provenance = {"allowed": allowed, "reason": reason, "parent": parent, "original_url": candidate}
+        parent_body = self.store.conn.execute("SELECT hash FROM urls WHERE url=?", (parent,)).fetchone() if parent.startswith(("http://", "https://")) else None
+        source_hash = parent.removeprefix("artifact:") if parent.startswith("artifact:") else parent_body[0] if parent_body else None
+        if source_hash and re.fullmatch(r"[0-9a-f]{64}", source_hash):
+            provenance["hash"] = source_hash
+        self.store.observed(url, "discovery", provenance, source, identity=hashlib.sha256(f"{url}:{source}:{parent}:{candidate}:{source_hash or ''}".encode()).hexdigest())
         if parent:
             self.store.relate(parent, url, source, source)
         for name, _ in parse_qsl(urlsplit(url).query, keep_blank_values=True):
@@ -370,14 +378,14 @@ class Scanner:
         if "checks" in self.config.modules:
             basic_checks(self.store, url, text, response.headers, digest, response.status)
         if "analysis" in self.config.modules:
-            if "gitleaks" not in self.config.modules:
+            if capability_enabled(self.config, "gitleaks") and "gitleaks" not in self.config.modules:
                 secrets(self.store, text, digest, "native", self.config.mode == "demo")
             refs = []
-            if "jsluice" not in self.config.modules:
+            if capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
                 refs = analyze_js(self.store, text, url, digest, self.config.mode == "demo", scan_secrets=False) if kind == "js" else analyze_map(self.store, text, url, digest, self.config.budgets.response_bytes, self.config.mode == "demo", scan_secrets=False) if kind == "map" else []
             for candidate, provenance in refs:
                 self.add_url(candidate, provenance, "artifact:" + digest, depth+1, fetch=provenance != "inferred_endpoint_non_get")
-            for inline in parser.inline:
+            for inline in parser.inline if capability_enabled(self.config, "jsluice") else []:
                 inline_hash = self.save_artifact(inline.encode(), "js", url)
                 if "jsluice" in self.config.modules:
                     continue
@@ -455,15 +463,15 @@ class Scanner:
                 kind = "map" if path.suffix == ".map" else "js" if path.suffix == ".js" else "content"
                 digest = self.save_artifact(body, kind, "local-input")
                 text = body.decode(errors="replace")
-                if "gitleaks" not in self.config.modules:
+                if capability_enabled(self.config, "gitleaks") and "gitleaks" not in self.config.modules:
                     secrets(self.store, text, digest, "local-input", self.config.mode == "demo")
-                if kind == "js" and "jsluice" not in self.config.modules:
+                if kind == "js" and capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
                     for url, provenance in analyze_js(self.store, text, self.manifest["target"], digest, self.config.mode == "demo", scan_secrets=False):
                         self.add_url(url, provenance, "artifact:" + digest, fetch=provenance != "inferred_endpoint_non_get")
-                elif kind == "map" and "jsluice" not in self.config.modules:
+                elif kind == "map" and capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
                     for url, provenance in analyze_map(self.store, text, self.manifest["target"], digest, self.config.budgets.response_bytes, self.config.mode == "demo", scan_secrets=False):
                         self.add_url(url, provenance, "artifact:" + digest, fetch=provenance != "inferred_endpoint_non_get")
-                if "jsluice" not in self.config.modules:
+                if capability_enabled(self.config, "jsluice") and "jsluice" not in self.config.modules:
                     self.store.execute("UPDATE artifacts SET analyzed=1 WHERE hash=?", (digest,))
                 self.store.set_meta(key, digest)
             except (OSError, ValueError) as exc:

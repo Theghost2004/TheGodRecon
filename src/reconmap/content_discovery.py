@@ -157,6 +157,9 @@ def prepare_hosts(scanner):
     if not patterns:
         scanner.store.stage('wordlist-hosts','skipped','Exact-host scope: no dictionary subdomains authorized')
         return
+    if scanner.config.discovery.wordlists or 'dns' in scanner.config.discovery.exclude_wordlists:
+        scanner.store.stage('wordlist-hosts','skipped','Explicit dictionaries/exclusions take precedence over automatic DNS list selection')
+        return
     installed=locate()
     if not installed['installed']:
         scanner.store.stage('wordlist-hosts','skipped','Verified DNS dictionary unavailable; no scope expansion')
@@ -195,7 +198,7 @@ async def run(scanner):
         for url,source,provenance in evidence_candidates(scanner):
             scanner.scheduler.check_time()
             if candidate(scanner,url,source,provenance,slots=slots):slots-=1
-        selected=select_lists(scanner.store,installed)
+        selected=[] if scanner.config.discovery.wordlists else select_lists(scanner.store,installed)
         inputs=[('custom:'+str(i+1),path,None,'explicit custom dictionary') for i,path in enumerate(scanner.config.discovery.wordlists)]
         for name,reason in selected:
             spec=installed['available']['common' if name=='php' else name]
@@ -205,6 +208,8 @@ async def run(scanner):
         for old in scanner.store.meta('wordlists_used',[]):
             if old['name']!='dns' and not any(name==old['name'] for name,*_ in inputs):
                 inputs.append((old['name'],old['path'],None,old['reason']))
+        excluded = scanner.config.discovery.exclude_wordlists
+        inputs = [(name,path,spec,reason) for name,path,spec,reason in inputs if name not in excluded and str(path) not in excluded]
         if not inputs:
             problems.append('No verified SecLists/custom dictionaries; only evidence-derived candidates considered')
         for name,path,spec,reason in inputs:
@@ -218,7 +223,7 @@ async def run(scanner):
             for entry in entries:
                 scanner.scheduler.check_time()
                 for origin in target_origins:
-                    if candidate(scanner,urljoin(origin,entry),'wordlist:'+name,provenance,slots=slots):slots-=1
+                    if candidate(scanner,urljoin(origin,entry),'wordlist:'+name,{**provenance, 'entry':entry},slots=slots):slots-=1
         scanner.store.set_meta('discovery_generated',True)
         from .orchestrator import native_web
         await native_web(scanner)

@@ -247,7 +247,8 @@ def test_schema2_readonly_and_additive_migration_preserve_analyst_evidence(tmp_p
     assert (tmp_path/'recon.sqlite').read_bytes() == before
     store = Store(tmp_path)
     try:
-        assert store.conn.execute('PRAGMA user_version').fetchone()[0] == 3
+        from reconmap.storage import SCHEMA
+        assert store.conn.execute('PRAGMA user_version').fetchone()[0] == SCHEMA
         assert store.rows('analyst_actions')[0]['note'] == 'preserve decision'
     finally: store.close()
 

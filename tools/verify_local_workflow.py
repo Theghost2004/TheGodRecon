@@ -155,7 +155,29 @@ def verify(root, overrides):
         command(['rerun','--from',str(god_run),'--tools','offline',*tool_args],(0,2))
         assert hits==before_resume
         checks += ['God Mode discovery allocation and provenance','God Mode policy and tool accounting','God Mode resume/offline rerun without traffic']
-        result = {'passed': checks, 'requests': len(hits), 'paths': hits, 'summary': report['summary'],
+        blackbox_root=root/'blackbox'
+        before_blackbox=len(hits)
+        command(['blackbox',target,'--config',str(scope),'--wordlist',str(custom),'--wordlist-budget','5','--output-root',str(blackbox_root),*tool_args],2)
+        blackbox_run=blackbox_root/'127.0.0.1'
+        graph=json.loads((blackbox_run/'graph/asset-graph.json').read_text())
+        nodes={n['id']:n for n in graph['nodes']}
+        assert all(e['source'] in nodes and e['destination'] in nodes for e in graph['edges'])
+        assert any(e['type']=='loads_script' for e in graph['edges'])
+        assert any(e['type']=='references_api' for e in graph['edges'])
+        assert any(n['type']=='external_reference' and 'live-observed' not in n['states'] for n in nodes.values())
+        blackbox_summary=json.loads((blackbox_run/'reports/investigation.json').read_text())['summary']
+        assert blackbox_summary['workflow']=='blackbox' and len(blackbox_summary['selected_tools'])==8
+        blackbox_hits=hits[before_blackbox:]
+        assert len(blackbox_hits)<=30 and not {'/api/write','/admin/excluded','/logout'} & set(blackbox_hits)
+        before_custom=len(hits)
+        custom_root=root/'customized'
+        command(['scan',target,'--config',str(scope),'--tools','httpx,katana','--output-root',str(custom_root),*tool_args],2)
+        custom_coverage=json.loads((custom_root/'127.0.0.1/reports/coverage.json').read_text())
+        assert {r['tool'] for r in custom_coverage['tools'] if r['selected']}=={'httpx','katana'}
+        assert '/api/admin/users' not in hits[before_custom:]  # JS was captured, analysis was not selected
+        checks += ['canonical BlackBox selects eight capabilities', 'BlackBox tree and graph integrity', 'observed script and inferred API relationships', 'external references remain unobserved', 'customized scans never run unselected analysis']
+        result = {'passed': checks, 'blackbox_report':str(blackbox_run/'reports/index.html'),
+                  'asset_map':str(blackbox_run/'graph/asset-map.html'), 'graph_summary':graph['summary'], 'blackbox_paths':blackbox_hits, 'requests': len(hits), 'paths': hits, 'summary': report['summary'],
                   'resume_requests': 0, 'rerun_requests': 0, 'parent_unchanged': True,
                   'report': str(run / 'reports/index.html'), 'god_report':str(god_run/'reports/index.html'), 'god_paths':god_hits, 'god_coverage':god_coverage}
         (root / 'verification.json').write_text(json.dumps(result, indent=2), encoding='utf-8')

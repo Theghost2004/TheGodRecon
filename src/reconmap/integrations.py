@@ -139,7 +139,7 @@ def emit_js(scanner, artifact, text, records, bases, capture_ref):
             try:
                 url = urljoin(base, record["url"])
                 scanner.store.observed(url, "inferred_endpoint", {**redact_data(record), "method": method, "hash": artifact["hash"], "artifact": capture_ref,
-                    "state": "inferred from code; never confirms execution"}, "jsluice",
+                    "state": "inferred from code; never confirms execution", "source_url": base}, "jsluice",
                     identity=hashlib.sha256(f"{base}:{artifact['hash']}:{record}".encode()).hexdigest())
                 scanner.add_url(url, "jsluice", "artifact:" + artifact["hash"], depth=artifact_depth(scanner, base), fetch=method == "GET" and not method_restricted)
                 for location, key in (("query", "queryParams"), ("body-inferred", "bodyParams")):

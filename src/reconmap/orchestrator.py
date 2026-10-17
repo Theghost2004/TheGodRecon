@@ -9,6 +9,7 @@ import aiohttp
 
 from .config import ConfigError, normalize_url
 from .scope import ScopePolicy
+from .selectors import capability_enabled
 from .tool_registry import BY_NAME, REGISTRY, execution_status
 
 
@@ -57,7 +58,8 @@ def record_execution(scanner, name, *, engine=None, state="completed", reason=""
         engine = None
     if engine and engine not in result.actual_execution_engines:
         result.actual_execution_engines.append(engine)
-    result.fallback_used |= fallback and engine is not None
+    native_selected = scanner.config.execution_engines.get(name) == "native"
+    result.fallback_used |= fallback and engine is not None and not native_selected
     if primary_attempt or (engine is None and selected):
         if result.primary_status in {"failed", "partial", "unavailable", "incompatible", "blocked-by-policy"} and state in {"completed", "running"}:
             pass  # another successful input does not erase failed primary coverage
@@ -72,6 +74,8 @@ def record_execution(scanner, name, *, engine=None, state="completed", reason=""
     for target, values in ((result.input_artifacts, inputs), (result.output_artifacts, outputs),
                            (result.coverage_limitations, limitations)):
         target[:] = sorted(set(target) | {str(v) for v in values})
+    if native_selected:
+        result.primary_status = "native-selected"
     result.discovered_records += count
     result.duration_seconds = round(result.duration_seconds + seconds, 6)
     result.request_accounting.update(accounting or {})
@@ -181,7 +185,7 @@ def phase_plan(config):
         "local-inputs": bool(config.local_inputs) or "analysis" in config.modules,
         "wordlist-hosts": config.discovery.god_mode,
         "content-discovery": config.discovery.enabled,
-        "dns": active and bool({"dns", "http"} & set(config.modules)),
+        "dns": active and (capability_enabled(config, "dnsx") or config.selected_tools is None and "http" in config.modules),
         "native-web": config.mode not in {"passive", "offline"} and "http" in config.modules,
         "offline-tools": bool({"jsluice", "gitleaks"} & set(config.modules)),
         "asn": providers and "asn" in config.enrichments,
@@ -241,7 +245,7 @@ async def native_web(scanner):
         return
     names = ["httpx"] + (["katana"] if "crawl" in scanner.config.modules else []) + (["nuclei"] if "checks" in scanner.config.modules else [])
     if "analysis" in scanner.config.modules:
-        names += [n for n in ("jsluice", "gitleaks") if n not in scanner.config.modules]
+        names += [n for n in ("jsluice", "gitleaks") if capability_enabled(scanner.config, n) and n not in scanner.config.modules]
     with native_execution(scanner, names, "shared-native-web"):
         await _native_web(scanner)
 
@@ -293,6 +297,12 @@ async def run_pipeline(scanner):
     from .enrichment.wayback import collect_wayback
     initialize_tools(scanner)
     enabled = {row["name"]: row["enabled"] for row in phase_plan(scanner.config)}
+    if "http" not in scanner.config.modules:
+        for name in ("katana", "nuclei"):
+            if name in selected_names(scanner.config):
+                record_execution(scanner, name, state="skipped", reason="HTTP collection prerequisite not selected; no active fallback executed", limitations=["Select httpx with this capability to collect fresh authorized HTTP evidence"])
+                scanner.store.stage(name, "skipped", "HTTP collection prerequisite not selected")
+                scanner.limit(name + ": HTTP collection prerequisite not selected; coverage incomplete")
     for stage in stage_order():
         scanner.scheduler.check_time()
         scanner.store.stage("workflow:" + stage.name, "running", "Dependencies: " + ",".join(stage.dependencies))
@@ -316,7 +326,7 @@ async def run_pipeline(scanner):
                         count=len(scanner.store.rows("historical_urls")), accounting={"target_requests": 0, "owned_provider_requests": scanner.store.meta("provider_requests", 0)})
         elif stage.name == "local-inputs":
             from .reruns import analyze_reused
-            names = [n for n in ("jsluice", "gitleaks") if "analysis" in scanner.config.modules and n not in scanner.config.modules]
+            names = [n for n in ("jsluice", "gitleaks") if capability_enabled(scanner.config, n) and "analysis" in scanner.config.modules and n not in scanner.config.modules]
             with native_execution(scanner, names, "shared-native-local-inputs"):
                 analyze_reused(scanner)
                 scanner.local_inputs()
@@ -327,7 +337,7 @@ async def run_pipeline(scanner):
         elif stage.name == "content-discovery" and scanner.config.discovery.enabled:
             from .content_discovery import run as discover_content
             await discover_content(scanner)
-        elif stage.name == "dns" and ({"dns", "http"} & set(scanner.config.modules)):
+        elif stage.name == "dns" and enabled["dns"]:
             if scanner.config.mode not in {"demo", "offline", "passive"}:
                 with native_execution(scanner, ["dnsx"], "native-dns"):
                     await observe_dns(scanner)

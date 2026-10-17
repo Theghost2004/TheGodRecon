@@ -24,7 +24,7 @@ def test_empty_js_primary_runs_native_analysis_and_checkpoint(tmp_path,monkeypat
     assert scanner.store.conn.execute("SELECT 1 FROM jobs WHERE url='https://example.com/api/useful'").fetchone()
     coverage=summarize(scanner.store)
     assert coverage['javascript']['primary_empty_artifacts']==1 and coverage['javascript']['processed_artifacts']==1
-    assert coverage['tools'][0]['actually_ran']
+    assert next(t for t in coverage['tools'] if t['tool']=='jsluice')['actually_ran']
     asyncio.run(scanner.local_tools());assert len(calls)==1
     scanner.store.close()
 
@@ -87,7 +87,7 @@ def test_restricted_external_status_and_dashboard_are_truthful(tmp_path):
     for info in scanner.tools.values():info.supported=False
     initialize_tools(scanner)
     coverage=summarize(scanner.store)
-    assert all(t['installed'] and t['compatible'] and not t['direct_execution_permitted'] and not t['actually_ran'] for t in coverage['tools'])
+    assert all(t['installed'] and t['compatible'] and not t['direct_execution_permitted'] and not t['actually_ran'] for t in coverage['tools'] if t['selected'])
     scanner.store.set_meta('wordlist_requests',3)
     scanner.store.observed('https://example.com/probe','content-candidate',{},'fixture')
     data=snapshot(scanner)

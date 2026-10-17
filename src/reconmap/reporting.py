@@ -139,6 +139,12 @@ def generate_report(run: Path, store: Store | None = None) -> None:
             "target_requests": store.meta("requests", 0), "owned_provider_requests": store.meta("provider_requests", 0), "runtime_seconds": round(store.meta("elapsed_seconds", 0), 2),
         }
         run_summary["discovery_coverage"] = coverage
+        run_summary['not_selected_tools'] = [t['tool'] for t in coverage['tools'] if not t.get('selected', True)]
+        run_summary['workflow'] = config.get('workflow', 'scan')
+        if config.get('graph', True):
+            from .asset_graph import export_graph
+            run_summary['graph'] = export_graph(run, store)
+        graph_link = '<p><a href="../graph/asset-map.html">Explore endpoint relationship map</a> · <a href="../graph/endpoint-tree.txt">Endpoint tree</a></p>' if config.get('graph', True) else ''
         reports = run/"reports"
         reports.mkdir(exist_ok=True)
         atomic_json(reports/"coverage.json", coverage)
@@ -151,6 +157,8 @@ def generate_report(run: Path, store: Store | None = None) -> None:
                 for row in rows:
                     f.write(json.dumps(row,ensure_ascii=True)+"\n")
         for table in ("findings","urls","parameters","historical_urls","infrastructure","technologies","url_groups","endpoint_priority","investigation_candidates","normalized_records","stage_results","wordlist_discoveries","javascript_discoveries","tool_coverage"):
+            if "csv" not in config.get("report_formats", ["html","json","csv"]):
+                continue
             rows=data[table]
             keys=list(rows[0]) if rows else {"findings":["fingerprint","rule","subject","title","priority","confidence","severity","validation"],"urls":["url","state","status"],"parameters":["url","name","location","source"]}.get(table, ["No records"])
             with (reports/(table+".csv")).open("w",encoding="utf-8-sig",newline="") as f:
@@ -168,6 +176,8 @@ def generate_report(run: Path, store: Store | None = None) -> None:
             summary += ["", "## Rerun evidence", "", "Reused HTTP observations refer to the parent collection time. Offline reanalysis does not establish current liveness. Parent analyst decisions remain in the original run.", ""]
         summary += ["", "## Data handling", "", "Reports and normalized exports are pattern-redacted; review before sharing. Raw inputs under assets/ are restricted local evidence and may contain sensitive data. Delete the complete run directory for retention cleanup after closing scans/reports. No retention job runs automatically."]
         (reports/"summary.md").write_text("\n".join(summary)+"\n",encoding="utf-8")
+        if "html" not in config.get("report_formats", ["html","json","csv"]):
+            return
         records=[]
         sections=[]
         diff_path=run/"diff"/"comparison.json"
@@ -212,7 +222,7 @@ def generate_report(run: Path, store: Store | None = None) -> None:
                 sections.append(f'<section data-view="{label}" id="{anchor}"><h2>{label} ({len(rows)})</h2><details><summary>{description}</summary>{body_text}</details></section>')
             else:
                 sections.append(f'<section data-view="{label}" id="{anchor}"><h2>{label} ({len(rows)})</h2>{body_text}</section>')
-        coverage_views = {"JavaScript Discoveries":"javascript_discoveries", "Wordlist Discoveries":"wordlist_discoveries", "Tool Execution and Coverage":"tool_coverage"} if config.get('discovery',{}).get('enabled') else {}
+        coverage_views = {"JavaScript Discoveries":"javascript_discoveries", "Wordlist Discoveries":"wordlist_discoveries", "Tool Execution and Coverage":"tool_coverage"} if config.get('discovery',{}).get('enabled') else {"Tool Execution and Coverage":"tool_coverage"}
         for label, key in coverage_views.items():
             body = []
             for row in data[key]:
@@ -253,9 +263,11 @@ def generate_report(run: Path, store: Store | None = None) -> None:
 <p>Investigation leads require manual validation. Raw artifacts may contain sensitive content. No target resource is loaded by this report.</p>
 <p>Historical URLs are archive metadata, not current liveness. Rerun observations may be reused from a parent's collection timestamp. Technology confidence does not confirm a software version or vulnerability.</p>
 <details><summary>Effective scope and budgets</summary><pre>{html.escape(json.dumps(config,indent=2))}</pre></details>
+{graph_link}
 <nav>{' · '.join(f'<a href="#{label.lower().replace(" ", "-")}">{label}</a>' for label in (*primary_views, *coverage_views))}</nav>
 <p><strong>{run_summary['high_interest']} high-interest · {run_summary['manual_review']} manual-review</strong> · {run_summary['currently_observed_assets']} currently observed / {run_summary['discovered_assets']} discovered · {run_summary['duplicate_cards_suppressed']} repeated cards grouped · {run_summary['low_value_inventory']} low-value records retained · {run_summary['runtime_seconds']}s runtime.</p>
 <p>Selected tools: {html.escape(', '.join(run_summary['selected_tools']) or 'Native modules')}<br>Successfully executed: {html.escape(', '.join(run_summary['executed_tools']) or 'See native execution details')}<br>Native fallbacks: {html.escape(', '.join(s.replace('-', ' ') for s in run_summary['native_fallbacks']) or 'None')}</p>
+<p>Not selected: {html.escape(', '.join(run_summary['not_selected_tools']) or 'None')}</p>
 <details><summary>Partial or missing coverage ({len(run_summary['partial_coverage'])})</summary><pre>{html.escape(json.dumps(run_summary['partial_coverage'],indent=2))}</pre></details>
 <p><a href="investigation.json" download>Investigation export</a> · <a href="snapshot.json" download>Complete redacted snapshot</a> · <a href="stage-results.json" download>Execution accounting</a></p>
 <details><summary>Crawler summary — {coverage['crawler']['urls_tested']} tested / {coverage['crawler']['urls_discovered']} discovered</summary><pre>{html.escape(json.dumps(coverage['crawler'],indent=2))}</pre></details>

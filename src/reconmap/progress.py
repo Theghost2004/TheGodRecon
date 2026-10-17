@@ -30,11 +30,14 @@ def snapshot(scanner):
     tools = []
     for name, info in scanner.tools.items():
         result = results.get(STAGE_NAMES[name], {})
-        tools.append({'name': name, 'primary': result.get('primary_status', 'ready' if info.supported else 'blocked-by-policy' if info.compatible else 'incompatible' if info.available else 'missing'),
+        native_selected = scanner.config.execution_engines.get(name) == 'native'
+        tools.append({'name': name, 'primary': result.get('primary_status', 'native-selected' if native_selected else 'ready' if info.supported else 'blocked-by-policy' if info.compatible else 'incompatible' if info.available else 'missing'),
                       'status': result.get('status', 'waiting'), 'engines': result.get('actual_execution_engines', []),
                       'fallback': result.get('fallback_used', False) or (result.get('primary_status') in {'unavailable', 'incompatible', 'failed', 'partial', 'blocked-by-policy'} and any(e.startswith('native-') for e in result.get('actual_execution_engines', []))),
-                      'installed': info.available, 'compatible': info.compatible, 'permitted': info.supported, 'ran': bool(store.meta('executed:'+name, False)), 'seconds': result.get('duration_seconds',0), 'count': result.get('discovered_records', 0), 'reason': result.get('failure_reason', '')})
-    return {'target': scanner.manifest['target'], 'mode': scanner.config.mode, 'profile': scanner.config.profile,
+                      'installed': None if native_selected else info.available, 'compatible': None if native_selected else info.compatible, 'permitted': info.supported, 'ran': bool(store.meta('executed:'+name, False)), 'seconds': result.get('duration_seconds',0), 'count': result.get('discovered_records', 0), 'reason': result.get('failure_reason', '')})
+    from .tool_registry import BY_NAME
+    missing = [name for name in BY_NAME if name not in scanner.tools and not results.get(STAGE_NAMES[name],{}).get('actual_execution_engines')]
+    return {'workflow':scanner.config.workflow, 'not_selected':missing, 'graph':store.meta('graph_summary',{}), 'target': scanner.manifest['target'], 'mode': scanner.config.mode, 'profile': scanner.config.profile,
             'state': scanner.manifest['state'], 'phase': next((p for p in phases if stages.get('workflow:'+p, {}).get('state') == 'running'), scanner.manifest['state']),
             'completed': sum(stages.get('workflow:'+p, {}).get('state') == 'completed' for p in phases), 'total': len(phases),
             'waiting': [p for p in phases if 'workflow:'+p not in stages], 'tools': tools,
@@ -94,6 +97,8 @@ class Dashboard:
                 f'Target: {data["target"]}',
                 f'Workflow: {data["completed"]}/{data["total"]} phases completed | Current: {data["phase"]}',
                 'Waiting: ' + (', '.join(data['waiting']) or 'none')]
+        rows.append('Selected external capabilities: ' + (', '.join(t['name'] for t in data['tools']) or 'native module configuration'))
+        rows.append('Not selected: ' + (', '.join(data['not_selected']) or 'none'))
         for tool in data['tools']:
             actual = ','.join(tool['engines']) or 'not executed'
             fallback = ' | Native fallback' if tool['fallback'] else ''
@@ -111,6 +116,7 @@ class Dashboard:
                  'Jobs: ' + ' | '.join(f'{k}: {data["jobs"].get(k,0)}' for k in ('queued', 'running', 'completed', 'failed')),
                  'Output: ' + data['path']]
         rows.append(f'URLs tested: {data["tested"]} | Wordlist/evidence candidates: {data["wordlist_candidates"]} | Discovery requests: {data["wordlist_requests"]}')
+        rows.append(f'Graph nodes: {data["graph"].get("nodes",0)} | Graph relationships: {data["graph"].get("edges",0)} | API candidates: {data["graph"].get("api_candidates",0)} | JS resources: {data["graph"].get("javascript_resources",0)} (finalized evidence)')
         if force and scanner.manifest['state'] not in {'created','running'}:
             from .coverage import summarize
             rows.append('Crawler stop reason: ' + summarize(scanner.store)['crawler']['stop_reason'])
