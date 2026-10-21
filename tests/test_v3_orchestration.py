@@ -283,5 +283,5 @@ def test_strict_empty_javascript_does_not_claim_native_fallback(tmp_path,monkeyp
 
 
 def test_provider_config_parent_exists_inside_isolated_home(tmp_path):
-    command=[sys.executable,'-c',"import os,pathlib;assert (pathlib.Path(os.environ['XDG_CONFIG_HOME'])/'urlfinder').is_dir()"]
+    command=[sys.executable,'-c',"import os,pathlib;assert all((pathlib.Path(os.environ['XDG_CONFIG_HOME'])/name).is_dir() for name in ('subfinder','urlfinder'))"]
     assert asyncio.run(execute(command,tmp_path,5)).code==0

@@ -220,7 +220,8 @@ async def main(argv):
     dns = DNS()
     udp, _ = await asyncio.get_running_loop().create_datagram_endpoint(lambda:dns, local_addr=('127.0.0.1',1053))
     tcp = await asyncio.start_server(accept(dns_tcp), '127.0.0.1', 1053, limit=4096)
-    os.makedirs('/tmp/home/urlfinder', mode=0o700, exist_ok=True)
+    for provider in ('subfinder', 'urlfinder'):
+        os.makedirs('/tmp/home/'+provider, mode=0o700, exist_ok=True)
     try:
         child = await asyncio.create_subprocess_exec('/tool', *argv, stdin=asyncio.subprocess.DEVNULL)
         print('RECONMAP_TOOL_STARTED', file=sys.stderr, flush=True)

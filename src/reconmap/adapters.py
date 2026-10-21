@@ -132,8 +132,9 @@ async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 
     # Prevent tool defaults from putting target-specific output in the real home.
     home = cwd / "home"
     home.mkdir(exist_ok=True)
-    # URLFinder 0.0.3 writes provider-config.yaml without creating its parent.
-    (home / "urlfinder").mkdir(mode=0o700, exist_ok=True)
+    # Reviewed provider clients write provider-config.yaml without making its parent.
+    for provider in ("subfinder", "urlfinder"):
+        (home / provider).mkdir(mode=0o700, exist_ok=True)
     env.update({"HOME": str(home), "USERPROFILE": str(home), "APPDATA": str(home), "LOCALAPPDATA": str(home), "XDG_CONFIG_HOME": str(home), "XDG_CACHE_HOME": str(home), "XDG_STATE_HOME": str(home), "TMPDIR": str(cwd), "TEMP": str(cwd), "TMP": str(cwd)})
     env.update(env_updates or {})
     options = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if os.name == "nt" else {"start_new_session": True}
