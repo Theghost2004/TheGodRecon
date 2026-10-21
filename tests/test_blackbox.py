@@ -136,7 +136,8 @@ def test_environment_preflight_is_readonly_and_informational(monkeypatch):
     monkeypatch.setattr('reconmap.environment.platform.system',lambda:'Windows')
     data=diagnostics()
     assert data['linux_effective_capabilities_hex'] is None
-    assert 'No verified' in data['network_controls']['external_active']
+    assert not data['network_controls']['external_active']['available']
+    assert 'No verified' in data['network_controls']['external_active']['reason']
     assert 'No privilege elevation' in data['note']
 
 

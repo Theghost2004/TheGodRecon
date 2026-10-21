@@ -229,9 +229,12 @@ def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path 
         read_manifest(baseline)
     tools={name:identify_selected(config, name) for name in config.modules if name in PINS}
     if config.strict_tools:
-        missing=[name for name,info in tools.items() if config.execution_engines.get(name) != "native" and not info.supported and not ((config.mode=="demo" or config.scope.lab) and name in {"subfinder","urlfinder"})]
-        if missing:
-            print("Dependency preflight failed: "+", ".join(missing)+". Run reconmap doctor.",file=sys.stderr)
+        from .execution_boundary import ACTIVE_TOOLS, execution_requirement, probe_boundary
+        boundary=probe_boundary() if set(tools) & ACTIVE_TOOLS else None
+        effective_target=target or (read_manifest(resume)['target'] if resume else None)
+        missing={name:execution_requirement(config,name,info,boundary,effective_target) for name,info in tools.items()}
+        if any(missing.values()):
+            print("Dependency preflight failed:\n"+"\n".join(name+': '+reason for name,reason in missing.items() if reason),file=sys.stderr)
             return 4
     path,manifest=prepare_run(config,target,output_root,resume,baseline)
     print("Effective scope: "+redact(json.dumps(config.scope.model_dump(),sort_keys=True)))
@@ -253,7 +256,7 @@ def run(config: ScanConfig, target: str | None, output_root: Path, resume: Path 
                 if info.get("sha256") != new.get("sha256") or info.get("version") != new.get("version"):
                     raise ConfigError(f"Tool identity changed for {name}; start a new run to preserve provenance")
         import importlib.metadata
-        atomic_json(saved_path,{"engine":__version__,"python":sys.version.split()[0],"external":current,"libraries":{n:importlib.metadata.version(n) for n in ("aiohttp","pydantic","tree-sitter","tree-sitter-javascript")},"template_profile":"reconmap-exposure-v1 (native, no upstream template execution)","traffic_accounting":"Target HTTP and owned RIPE/CDX reservations are separate measured counters; external Subfinder/URLFinder provider counts remain unknown"})
+        atomic_json(saved_path,{"engine":__version__,"python":sys.version.split()[0],"external":current,"libraries":{n:importlib.metadata.version(n) for n in ("aiohttp","pydantic","tree-sitter","tree-sitter-javascript")},"template_profile":"reconmap-exposure-v1 (two hashed templates; native or contained Nuclei, see stage results)","traffic_accounting":"Broker and native target HTTP share reservations; DNS operations and RIPE/CDX are separate measured counters; external Subfinder/URLFinder provider counts remain unknown"})
         from .environment import diagnostics
         atomic_json(path/"environment.json", diagnostics(tools))
         previous=signal.getsignal(signal.SIGTERM)

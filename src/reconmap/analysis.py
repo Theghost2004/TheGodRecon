@@ -199,8 +199,8 @@ def secrets(store: Store, text: str, artifact_hash: str, source: str, synthetic:
             store.finding(rule, f"artifact:{artifact_hash}:{fingerprint}", "Synthetic secret fixture" if synthetic else "Potential secret material; do not validate automatically", {"hash": artifact_hash, "line": line, "excerpt": excerpt, "synthetic": synthetic, "secret_fingerprint": fingerprint, "next_check": "Review ownership and context locally; never contact the credential provider automatically"}, confidence="low" if synthetic else "medium", priority=5 if synthetic else 80, reasons=["synthetic test data" if synthetic else "recognized secret syntax; validity untested"], source=source)
 
 
-def basic_checks(store: Store, url: str, text: str, headers: dict[str, str], artifact_hash: str, status: int) -> None:
-    evidence = {"hash": artifact_hash, "status": status, "next_check": "Review authorization and whether this exposure is intended; no vulnerability is confirmed"}
+def basic_checks(store: Store, url: str, text: str, headers: dict[str, str], artifact_hash: str, status: int, *, source='native', only_rules=None, extra_evidence=None) -> None:
+    evidence = {**(extra_evidence or {}), "hash": artifact_hash, "status": status, "next_check": "Review authorization and whether this exposure is intended; no vulnerability is confirmed"}
     signatures = [
         ("git-head", r"(?m)^ref: refs/heads/", "Potential exposed source-control metadata", 75),
         ("environment-config", r"(?m)^(?:DB_PASSWORD|DATABASE_URL|SECRET_KEY|AWS_SECRET_ACCESS_KEY)\s*=", "Potential exposed configuration", 85),
@@ -210,13 +210,17 @@ def basic_checks(store: Store, url: str, text: str, headers: dict[str, str], art
     ]
     if status == 200:
         for rule, pattern, title, score in signatures:
+            if only_rules is not None and rule not in only_rules:
+                continue
             match = re.search(pattern, text)
             if rule == "git-head" and (not urlsplit(url).path.endswith("/.git/HEAD") or not re.fullmatch(r"ref: refs/heads/[A-Za-z0-9_./-]+\s*", text)):
                 continue
             if rule == "environment-config" and ("html" in headers.get("content-type", "") or not urlsplit(url).path.rsplit("/", 1)[-1].startswith(".env")):
                 continue
             if match:
-                store.finding(rule, url, title, {**evidence, "excerpt": redact(text[max(0, match.start()-30):match.end()+70])}, priority=score, reasons=["current response matches a bounded exposure signature"])
+                store.finding(rule, url, title, {**evidence, "excerpt": redact(text[max(0, match.start()-30):match.end()+70])}, priority=score, reasons=["current response matches a bounded exposure signature"], source=source)
+    if only_rules is not None:
+        return
     if headers.get("access-control-allow-origin"):
         store.observed(url, "cors", {"origin": headers.get("access-control-allow-origin"), "credentials": headers.get("access-control-allow-credentials"), "validation": "context required; no cross-origin credential request made"}, "native")
     from .enrichment.prioritization import classify_route

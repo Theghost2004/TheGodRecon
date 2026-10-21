@@ -88,7 +88,7 @@ reconmap blackbox https://example.com
 reconmap blackbox https://example.com --max-requests 5000 --depth 3 --max-minutes 30
 ```
 
-BlackBox coordinates all eight capabilities, local JavaScript/secret analysis, evidence-driven SecLists selection, correlation, the existing report and a separate endpoint relationship map. Every request stays within the configured scope and shared budgets. Restricted external tools use protected native implementations; the coverage summary names the actual engines and limitations.
+BlackBox coordinates all eight capabilities, local JavaScript/secret analysis, evidence-driven SecLists selection, correlation, the existing report and a separate endpoint relationship map. Every request stays within the configured scope and shared budgets. Active external tools use the verified Linux execution boundary when available; eligible native fallbacks retain the same controls. The coverage summary names the actual engines and limitations.
 
 For direct control, use the same engine through `scan`:
 
@@ -120,7 +120,7 @@ BlackBox selects small common paths, supplements observed APIs, and uses capture
 
 Selected tools run when compatible and permitted. Missing or failed tools use applicable native fallbacks within the same scope and remaining budgets. The dashboard distinguishes primary tool status from the actual executing engine. Redirected output uses plain text.
 
-**dnsx, ProjectDiscovery httpx, Katana and Nuclei remain restricted from direct active execution.** Their native alternatives enforce the central request policy. Installing a binary does not grant permission to run it. Subfinder has no equivalent native enumeration; URLFinder's CDX alternative requires explicitly enabled Wayback enrichment.
+**dnsx, ProjectDiscovery httpx, Katana and Nuclei require a verified Linux x86-64 execution boundary.** Bubblewrap isolates their network and processes; an HTTP/DNS broker enforces the central policy, including decrypted HTTPS paths. Unsupported hosts retain native fallbacks. `--strict-tools` requires every selected external binary and its runtime prerequisites before creating a run, and never substitutes a native engine. See [external execution](docs/EXTERNAL_EXECUTION.md) for Linux setup, verification and current limitations. Installing a binary alone does not grant permission to run it. Subfinder has no equivalent native enumeration; URLFinder's CDX alternative requires explicitly enabled Wayback enrichment.
 
 ## Viewing Reports
 

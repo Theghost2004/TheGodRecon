@@ -39,10 +39,11 @@ class StageResult:
     duration_seconds: float = 0.0
     started: str | None = None
     finished: str | None = None
+    process_executions: list[dict] = field(default_factory=list)
 
 
 def record_execution(scanner, name, *, engine=None, state="completed", reason="", fallback=False,
-                     inputs=(), outputs=(), count=0, seconds=0.0, accounting=None, limitations=()):
+                     inputs=(), outputs=(), count=0, seconds=0.0, accounting=None, limitations=(), process=None):
     """One durable result per capability; repeated waves accumulate actual work."""
     from .storage import timestamp
     from .security import redact
@@ -79,6 +80,8 @@ def record_execution(scanner, name, *, engine=None, state="completed", reason=""
     result.discovered_records += count
     result.duration_seconds = round(result.duration_seconds + seconds, 6)
     result.request_accounting.update(accounting or {})
+    if process is not None:
+        result.process_executions.append(process)
     result.status = state
     if state == "completed" and (result.coverage_limitations or result.primary_status in {"unavailable", "incompatible", "blocked-by-policy", "failed", "partial"}):
         result.status = "partial"
@@ -90,9 +93,14 @@ def record_execution(scanner, name, *, engine=None, state="completed", reason=""
 
 def fallback_allowed(scanner, name):
     """A missing containment capability is distinct from denied target actions."""
+    if scanner.config.strict_tools and name in selected_names(scanner.config):
+        return False
     scanner.scheduler.check_time()
     scanner.check_disk_budget()
     if BY_NAME[name].risk == "active":
+        counter,ceiling=('dns_operations',scanner.config.budgets.dns_queries) if name=='dnsx' else ('requests',scanner.config.budgets.requests)
+        if scanner.store.meta(counter,0)>=ceiling:
+            return False
         return scanner.config.mode not in {"offline", "passive"} and scanner.policy.decision(scanner.manifest["target"])[0]
     return True
 
@@ -134,7 +142,7 @@ def native_execution(scanner, names, accounting_group):
                 outputs=["recon.sqlite:observations", "recon.sqlite:dns"],
                 accounting={"group": accounting_group, "shared_counters_not_additive": True,
                     "target_requests": scanner.store.meta("requests", 0), "dns_operations": scanner.store.meta("dns_operations", 0)},
-                limitations=[BY_NAME[name].policy_reason] if selected else [])
+                limitations=[])
 
 
 @dataclass(frozen=True)
@@ -199,17 +207,16 @@ def build_plan(config, target, tools):
     allowed, reason = ScopePolicy(config.scope).decision(target)
     if not allowed:
         raise ConfigError("Seed denied by scope: " + reason)
+    from .execution_boundary import ACTIVE_TOOLS, execution_requirement, probe_boundary
+    boundary = probe_boundary() if any(n in ACTIVE_TOOLS and tools[n].supported for n in selected_names(config)) else None
     records = []
     for name in selected_names(config):
         spec = BY_NAME[name]
         info = tools[name]
-        status = execution_status(info)
-        if (config.mode in {"demo", "offline"} or config.scope.lab) and spec.risk == "provider":
-            status = "skipped"
-        elif config.mode == "passive" and spec.risk == "active":
-            status = "blocked-by-policy"
-        records.append({**info.record(), "status": status, "dependencies": list(spec.dependencies), "policy_reason": spec.policy_reason})
-    issues = [r for r in records if r["status"] not in {"ready", "skipped"}]
+        reason = execution_requirement(config,name,info,boundary,target)
+        status = execution_status(info) if not reason or not info.supported else 'blocked-by-policy'
+        records.append({**info.record(), "status": status, "dependencies": list(spec.dependencies), "policy_reason": reason})
+    issues = [r for r in records if r["status"] != "ready"]
     provider_stages = [n for n in config.enrichments if n in {"asn", "wayback"}]
     return {
         "target": target, "mode": config.mode, "profile": config.profile,
@@ -220,7 +227,7 @@ def build_plan(config, target, tools):
         "budgets": config.budgets.model_dump(), "provider_budgets": config.providers.model_dump(),
         "provider_access": provider_stages, "fully_supported": not issues,
         "safe_to_execute": not (config.strict_tools and issues),
-        "security": "Direct active subprocesses are blocked. Native fallbacks alone own target requests; provider APIs have a separate pinned allowlist and budget.",
+        "security": "Active executables require a verified isolated Linux backend. The HTTP/DNS broker owns target requests, decrypted-path checks and shared budgets. Strict mode never substitutes native engines.",
         "input_guidance": "Offline tools require captured/local artifacts; absent inputs are explicitly skipped. No external dependency tool is automatically selected.",
     }
 
@@ -239,29 +246,42 @@ def print_plan(plan):
     print(plan["input_guidance"])
 
 
-async def native_web(scanner):
+async def native_web(scanner, capabilities=None):
     if scanner.config.mode in {"passive", "offline"} or "http" not in scanner.config.modules:
         scanner.store.stage("http", "skipped", "No target HTTP in this execution")
         return
-    names = ["httpx"] + (["katana"] if "crawl" in scanner.config.modules else []) + (["nuclei"] if "checks" in scanner.config.modules else [])
+    names = capabilities if capabilities is not None else ["httpx"] + (["katana"] if "crawl" in scanner.config.modules else []) + (["nuclei"] if "checks" in scanner.config.modules else [])
+    if scanner.config.strict_tools and set(names) & set(selected_names(scanner.config)):
+        raise ConfigError('Strict external execution refuses native substitution')
+    if 'nuclei' in names:
+        scanner.native_checks_enabled = True
+        # Reuse bodies already collected by successful tools before a fallback.
+        from .analysis import basic_checks
+        from .storage import artifact_path
+        for row in scanner.store.rows('observations'):
+            if row['kind']!='http': continue
+            data=json.loads(row['data'])
+            body=scanner.store.conn.execute('SELECT path FROM artifacts WHERE hash=?',(data.get('hash'),)).fetchone()
+            if body:
+                basic_checks(scanner.store,row['subject'],artifact_path(scanner.run,body[0]).read_text(encoding='utf-8',errors='replace'),data.get('headers',{}),data['hash'],data['status'])
     if "analysis" in scanner.config.modules:
         names += [n for n in ("jsluice", "gitleaks") if capability_enabled(scanner.config, n) and n not in scanner.config.modules]
     with native_execution(scanner, names, "shared-native-web"):
-        await _native_web(scanner)
+        await _native_web(scanner, names)
 
 
-async def _native_web(scanner):
+async def _native_web(scanner, capabilities=None):
     from .engine import SafeResolver
     if scanner.config.mode in {"passive", "offline"} or "http" not in scanner.config.modules:
         scanner.store.stage("http", "skipped", "No target HTTP in this execution")
         return
     seed = urlsplit(scanner.manifest["target"])
     origin = urlunsplit(seed._replace(path="/", query="", fragment=""))
-    if "crawl" in scanner.config.modules:
+    if "crawl" in scanner.config.modules and (capabilities is None or 'katana' in capabilities):
         import hashlib
         for path in ("robots.txt", "sitemap.xml", "__reconmap_missing_" + hashlib.sha256(scanner.manifest["target"].encode()).hexdigest()[:12]):
             scanner.add_url(urljoin(origin, path), "bounded-baseline")
-    if "checks" in scanner.config.modules:
+    if "checks" in scanner.config.modules and (capabilities is None or 'nuclei' in capabilities):
         paths = (".git/HEAD", ".env") if "nuclei" in scanner.config.modules else (".git/HEAD", ".env", "openapi.json", "swagger.json")
         for path in paths:
             scanner.add_url(urljoin(origin, path), "exposure-profile-v1")
@@ -272,23 +292,62 @@ async def _native_web(scanner):
         # SQLite is the bounded durable producer-consumer queue. The host, depth,
         # request, time and disk caps are checked before work enters/consumes it.
         while True:
-            await scanner.crawl()
+            count = scanner.store.conn.execute("SELECT COUNT(*) FROM jobs WHERE state='queued'").fetchone()[0]
+            await scanner.crawl(max_jobs=None if capabilities is None or 'katana' in capabilities else count)
             await scanner.local_tools()
+            if capabilities is not None and 'katana' not in capabilities:
+                break
             if not scanner.store.conn.execute("SELECT 1 FROM jobs WHERE state='queued' LIMIT 1").fetchone():
                 break
 
 
 def initialize_tools(scanner):
     from .storage import timestamp
+    from .execution_boundary import ACTIVE_TOOLS, execution_requirement, probe_boundary
+    scanner.boundary = probe_boundary() if any(n in ACTIVE_TOOLS and scanner.tools[n].supported for n in selected_names(scanner.config)) else None
+    requirements={}
     for name in selected_names(scanner.config):
         info = scanner.tools[name]
         scanner.store.register_tool(info)
         spec = BY_NAME[name]
         if not scanner.store.conn.execute("SELECT 1 FROM stage_results WHERE name=?", (STAGE_NAMES[name],)).fetchone():
             record_execution(scanner, name, state="pending")
-        if spec.policy_reason:
-            scanner.store.stage(name, "blocked-by-policy", spec.policy_reason + "; native fallback: " + ",".join(spec.fallback))
-            record_execution(scanner, name, state="blocked-by-policy", reason=spec.policy_reason, limitations=[spec.policy_reason])
+        reason=execution_requirement(scanner.config,name,info,scanner.boundary,scanner.manifest['target'])
+        requirements[name]={'permitted':not reason,'reason':reason}
+        if scanner.config.execution_engines.get(name)=='native' and not scanner.config.strict_tools:
+            scanner.store.stage(name,'skipped','Native implementation explicitly selected')
+            continue
+        if reason and spec.risk=='active':
+            state=execution_status(info) if not info.supported else 'blocked-by-policy'
+            scanner.store.stage(name,state,reason)
+            record_execution(scanner,name,state=state,reason=reason,limitations=[reason])
+    scanner.store.set_meta('execution_requirements',requirements)
+    if scanner.config.strict_tools and any(r['reason'] for r in requirements.values()):
+        raise ConfigError('Strict external preflight failed: '+'; '.join(n+': '+r['reason'] for n,r in requirements.items() if r['reason']))
+
+
+async def web_workflow(scanner):
+    from .active_tools import run_active
+    if not set(selected_names(scanner.config)) & {'httpx','katana','nuclei'}:
+        return await native_web(scanner)
+    if scanner.config.mode in {'offline','passive'} or 'http' not in scanner.config.modules:
+        return
+    # New JS/content candidates return to the same queue. Successful requests and
+    # completed external inputs are reused; no independent tool traffic exists.
+    while True:
+        before=tuple((r['url'],r['state']) for r in scanner.store.rows('jobs'))
+        for name in ('httpx','katana'):
+            if name not in selected_names(scanner.config): continue
+            completed=await run_active(scanner,name)
+            if not completed and fallback_allowed(scanner,name):
+                await native_web(scanner,[name])
+        await scanner.local_tools()
+        after=tuple((r['url'],r['state']) for r in scanner.store.rows('jobs'))
+        if before==after or not any(state=='queued' for _,state in after): break
+    if 'nuclei' in selected_names(scanner.config):
+        completed=await run_active(scanner,'nuclei')
+        if not completed and fallback_allowed(scanner,'nuclei'):
+            await native_web(scanner,['nuclei'])
 
 
 async def run_pipeline(scanner):
@@ -316,7 +375,7 @@ async def run_pipeline(scanner):
             primary = scanner.store.conn.execute("SELECT state FROM stages WHERE name='urlfinder'").fetchone()
             if primary and primary[0] == "completed":
                 scanner.store.stage("wayback", "skipped", "URLFinder completed; no redundant historical enumeration")
-            else:
+            elif not (scanner.config.strict_tools and 'urlfinder' in selected_names(scanner.config)):
                 started = time.monotonic()
                 await collect_wayback(scanner)
                 if "urlfinder" in scanner.config.modules:
@@ -339,6 +398,12 @@ async def run_pipeline(scanner):
             await discover_content(scanner)
         elif stage.name == "dns" and enabled["dns"]:
             if scanner.config.mode not in {"demo", "offline", "passive"}:
+                from .active_tools import run_active
+                if 'dnsx' in selected_names(scanner.config):
+                    completed=await run_active(scanner,'dnsx')
+                    if completed or not fallback_allowed(scanner,'dnsx'):
+                        scanner.store.stage('workflow:dns','completed' if completed else 'partial','External DNS execution evaluated')
+                        continue
                 with native_execution(scanner, ["dnsx"], "native-dns"):
                     await observe_dns(scanner)
                     if "dns" in scanner.config.modules and "http" not in scanner.config.modules and scanner.config.mode not in {"demo", "offline", "passive"}:
@@ -357,7 +422,7 @@ async def run_pipeline(scanner):
                         if failures:
                             scanner.store.stage("dns", "partial", "Some native A/AAAA resolutions failed or returned prohibited addresses")
         elif stage.name == "native-web":
-            await native_web(scanner)
+            await web_workflow(scanner)
         elif stage.name == "offline-tools":
             await scanner.local_tools()
         elif stage.name == "asn" and "asn" in scanner.config.enrichments:

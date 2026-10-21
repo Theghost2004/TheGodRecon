@@ -7,6 +7,9 @@ from pathlib import Path
 
 
 def diagnostics(tools=None):
+    from dataclasses import asdict
+    from .execution_boundary import probe_boundary
+    boundary = asdict(probe_boundary())
     capabilities = None
     seccomp = None
     if platform.system() == 'Linux':
@@ -26,5 +29,5 @@ def diagnostics(tools=None):
         'executable_permissions':{name: bool(info.path and os.access(info.path,os.X_OK)) for name,info in (tools or {}).items()},
         'compatible_tools':{name:info.compatible for name,info in (tools or {}).items()},
         'network_controls':{'native':'Pinned destination resolver, explicit scope/method/redirect controls and shared request ceilings',
-            'external_active':'No verified cross-platform request containment; direct dnsx/httpx/Katana/Nuclei remain restricted'},
+            'external_active':boundary},
         'note':'Informational only: installed sandbox commands or Linux capabilities never authorize external network execution. No privilege elevation is performed.'}

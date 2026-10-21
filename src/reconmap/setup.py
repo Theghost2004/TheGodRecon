@@ -28,24 +28,32 @@ def health(overrides=None) -> dict:
     from .wordlists import locate
     records = doctor(overrides)
     from .environment import diagnostics
+    environment = diagnostics(records)
+    boundary = environment['network_controls']['external_active']
+    from .execution_boundary import ACTIVE_TOOLS
+    tool_rows={n:{**i.record(),'status':execution_status(i),'direct_execution_permitted':i.supported and (n not in ACTIVE_TOOLS or boundary['available'])} for n,i in records.items()}
+    for name,row in tool_rows.items():
+        if name in ACTIVE_TOOLS and row['supported'] and not boundary['available']:
+            row.update(status='backend-unavailable',reason=boundary['reason'])
     return {'version': __version__, 'python': platform.python_version(), 'platform': platform.system(), 'architecture': platform.machine(),
             'core': 'available' if sys.version_info >= (3, 12) and all(v['available'] for v in libraries.values()) else 'incomplete',
-            'libraries': libraries, 'tools': {n: {**i.record(), 'status': execution_status(i)} for n, i in records.items()},
-            'environment': diagnostics(records), 'optional_tools': 'ready' if all(i.compatible for i in records.values()) else 'partial', 'wordlists': locate()}
+            'libraries': libraries, 'tools': tool_rows,
+            'environment': environment, 'optional_tools': 'ready' if all(r['direct_execution_permitted'] for r in tool_rows.values()) else 'partial', 'wordlists': locate()}
 
 
 def print_health(data):
     print(f"TheGodRecon {data['version']} Health Check")
     print(f"Python {data['python']} | {data['platform']} {data['architecture']} | Core: {data['core']}")
     for name, row in data['tools'].items():
-        status = 'Installed / policy restricted' if row['compatible'] and row['status'] == 'blocked-by-policy' else 'Ready' if row['compatible'] else 'Missing' if not row['available'] else 'Incompatible'
+        status = 'Installed / backend unavailable' if row['status']=='backend-unavailable' else 'Ready' if row['compatible'] else 'Missing' if not row['available'] else 'Incompatible'
         fallback = ', '.join(row['fallback']) or 'no equivalent native enumeration'
         print(f"{row['id']} {name:12} {status:30} {row['version']}")
         print(f"  {row['path'] or '(not found)'} | fallback: {fallback}")
-        if not row['supported']:
+        if not row.get('direct_execution_permitted',row['supported']):
             print('  ' + row['reason'])
     environment = data.get("environment", {})
-    print(f"Environment: user {environment.get('user', 'unknown')}; UID {environment.get('effective_uid')}; active external containment unverified")
+    print(f"Environment: user {environment.get('user', 'unknown')}; UID {environment.get('effective_uid')}")
+    print('Active execution backend: '+str(environment.get('network_controls',{}).get('external_active',{}).get('reason','not checked')))
     from .wordlists import summary
     summary(data.get("wordlists"))
     print(f"Overall: Core {data['core']}; optional tools {data['optional_tools']}. Native fallbacks retain scope and budgets.")

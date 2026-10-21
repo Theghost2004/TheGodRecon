@@ -17,7 +17,7 @@ from .tool_registry import BY_NAME, REGISTRY
 
 PINS = {tool.name: tool.version for tool in REGISTRY}
 CAPABILITIES = {tool.name: tool.capability for tool in REGISTRY}
-REQUIRED_FLAGS = {"subfinder": ["-json", "-collect-sources", "-disable-update-check", "-rate-limit"], "urlfinder": ["-jsonl", "-collect-sources", "-disable-update-check", "-rate-limit"], "gitleaks": ["--redact", "--report-format", "--report-path"], "jsluice": ["urls", "secrets"], "dnsx": ["-json", "-rate-limit", "-disable-update-check"], "httpx": ["-json", "-rate-limit", "-disable-update-check"], "katana": ["-jsonl", "-crawl-duration", "-disable-update-check"], "nuclei": ["-jsonl", "-no-interactsh", "-disable-update-check"]}
+REQUIRED_FLAGS = {'subfinder': ['-json', '-collect-sources', '-disable-update-check', '-rate-limit'], 'urlfinder': ['-jsonl', '-collect-sources', '-disable-update-check', '-rate-limit'], 'gitleaks': ['--redact', '--report-format', '--report-path'], 'jsluice': ['urls', 'secrets'], 'dnsx': ['-json', '-rate-limit', '-disable-update-check', '-resolver', '-retry', '-timeout', '-aaaa', '-cname'], 'httpx': ['-json', '-rate-limit', '-disable-update-check', '-proxy', '-resolvers', '-no-fallback-scheme', '-include-response-header', '-response-size-to-read'], 'katana': ['-jsonl', '-crawl-duration', '-disable-update-check', '-proxy', '-resolvers', '-js-crawl', '-form-extraction', '-max-response-size', '-omit-body'], 'nuclei': ['-jsonl', '-no-interactsh', '-disable-update-check', '-proxy', '-proxy-internal', '-resolvers', '-disable-redirects', '-response-size-read', '-omit-template']}
 REVIEWED_JSLUICE_HASHES = {"0fe91d8b9a88b1029e90b6265417b4a34b3e617b0959b4d2aceea219d7917c43"}
 
 
@@ -90,8 +90,8 @@ def identify(name: str, override: str | None = None) -> ToolInfo:
             verified = False
         flags_present = all(f in help_text for f in REQUIRED_FLAGS.get(name, []))
         compatible = verified and flags_present and result.code == help_result.code == 0
-        supported = compatible and not BY_NAME[name].policy_reason
-        reason = BY_NAME[name].policy_reason or ("reviewed flags present; version compatible" if supported else "unreviewed version/flags; install the reviewed binary")
+        supported = compatible
+        reason = "reviewed flags present; version compatible" if supported else "unreviewed version/flags; install the reviewed binary"
         if name == "jsluice" and not verified:
             reason = "Unversioned jsluice build hash has not been reviewed; native Tree-sitter remains available. Review the build and add its fingerprint before execution"
         return ToolInfo(name, path, version, sha, True, supported, CAPABILITIES[name], reason, compatible)
@@ -202,8 +202,8 @@ async def execute(argv: list[str], cwd: Path, timeout: float, limit: int = 10 * 
 
 
 def command(info: ToolInfo, target_host: str, cwd: Path, seconds: int, input_path: Path | None = None, sources: list[str] | None = None) -> list[str]:
-    if BY_NAME[info.name].policy_reason:
-        raise ValueError("blocked-by-policy: " + BY_NAME[info.name].policy_reason)
+    if BY_NAME[info.name].risk == 'active':
+        raise ValueError("Active invocation requires the verified execution boundary; use run_contained")
     if not info.supported or not info.path:
         raise ValueError(f"Unsupported {info.name}: {info.reason}")
     if info.name == "subfinder":

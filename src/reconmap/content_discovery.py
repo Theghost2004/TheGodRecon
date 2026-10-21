@@ -225,8 +225,8 @@ async def run(scanner):
                 for origin in target_origins:
                     if candidate(scanner,urljoin(origin,entry),'wordlist:'+name,{**provenance, 'entry':entry},slots=slots):slots-=1
         scanner.store.set_meta('discovery_generated',True)
-        from .orchestrator import native_web
-        await native_web(scanner)
+        from .orchestrator import web_workflow
+        await web_workflow(scanner)
     except (asyncio.CancelledError, KeyboardInterrupt):
         interrupted=True
         problems.append('Discovery interrupted; evidence and remaining allocation retained')
