@@ -170,7 +170,7 @@ def test_real_four_tools_strict_pipeline_reports_and_resume(tmp_path,isolated,mo
                 assert questions and all(host=='localhost.' for host,_ in questions)
                 assert all(method=='GET' and not path.startswith('/excluded') and path!='/session' for method,path in hits)
                 assert len(hits)==len(set(hits)),hits
-                assert ('GET','/app.js') in hits and ('GET','/api/from-script') in hits
+                assert ('GET','/app.js') in hits and ('GET','/api/from-script') in hits, str([(r['subject'],r['data']) for r in store.rows('observations') if r['kind']=='external-request-denied'])
                 assert any(r['source']=='nuclei' and r['rule']=='git-head' for r in store.rows('findings'))
                 assert any(r['source']=='dnsx' for r in store.rows('dns'))
                 assert all(not r['fallback_used'] for r in results.values())

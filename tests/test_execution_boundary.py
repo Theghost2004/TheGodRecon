@@ -259,3 +259,18 @@ def test_repeated_tool_invocations_accumulate_measured_usage(scanner):
     assert data['request_accounting']['http_requests']==5
     assert data['request_accounting']['reused_responses']==2
     assert len(data['process_executions'])==2
+
+
+def test_katana_script_admission_keeps_method_depth_and_provenance(scanner):
+    base='https://127.0.0.1'
+    scanner.fixtures[base+'/']=Response(200,{'content-type':'text/html'},b'<script src="/app.js"></script>')
+    scanner.fixtures[base+'/app.js']=Response(200,{'content-type':'application/javascript'},b'fetch("/api/from-script");fetch("/api/change",{method:"POST"});')
+    scanner.fixtures[base+'/api/from-script']=Response(200,{'content-type':'application/json'},b'[]')
+    broker=boundary.Broker(scanner,'katana')
+    async def run():
+        for path in ('/','/app.js','/api/from-script'):
+            reply=await broker.dispatch(request(base+path))
+            assert reply['allowed'],reply
+        assert not (await broker.dispatch(request(base+'/api/change')))['allowed']
+    asyncio.run(run())
+    assert scanner.store.meta('requests')==3

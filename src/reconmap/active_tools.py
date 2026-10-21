@@ -28,7 +28,7 @@ def arguments(name, config):
     if name=='katana':
         return common+['-jsonl','-proxy','http://127.0.0.1:18080','-r','/resolvers.txt',
             '-d',str(max(1,config.budgets.depth)),'-jc','-fx','-c','1','-p','1','-retry','0',
-            '-timeout',timeout,'-mrs',str(config.budgets.response_bytes),'-ob']
+            '-timeout',timeout,'-mrs',str(config.budgets.response_bytes),'-or','-dr']
     if name=='nuclei':
         return common+['-jsonl','-t','/templates/git-head.yaml','-t','/templates/environment.yaml',
             '-ni','-dr','-proxy','http://127.0.0.1:18080','-pi','-r','/resolvers.txt',
