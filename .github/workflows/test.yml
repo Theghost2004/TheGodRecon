@@ -1,5 +1,8 @@
 name: Native core and offline integrations
 on: [push, pull_request, workflow_dispatch]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 permissions:
   contents: read
 jobs:
@@ -30,7 +33,21 @@ jobs:
       - name: Core and real offline integration tests
         env:
           RECONMAP_TEST_GITLEAKS: .tools/bin/gitleaks${{ runner.os == 'Windows' && '.exe' || '' }}
-        run: python -m pytest -q
+        run: python -m pytest -q --junitxml=core-results.xml
+      - name: Publish core failure diagnostics
+        if: always()
+        shell: python
+        run: |
+          import pathlib, xml.etree.ElementTree as ET
+          report = pathlib.Path('core-results.xml')
+          if report.exists():
+              for case in ET.parse(report).iter('testcase'):
+                  for failure in list(case):
+                      if failure.tag not in {'failure', 'error'}:
+                          continue
+                      detail = (failure.text or failure.get('message', ''))[-3500:]
+                      detail = detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print(f"::error title={case.get('name')}::{detail}")
       - name: CLI smoke and deterministic offline demonstration
         run: |
           reconmap --version
@@ -66,6 +83,7 @@ jobs:
         with:
           name: demo-${{ matrix.os }}-${{ matrix.python }}
           path: |
+            core-results.xml
             demo-output/
             v2-demo-output/
             god-demo-output/
