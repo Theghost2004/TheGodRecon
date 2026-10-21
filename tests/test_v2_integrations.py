@@ -89,7 +89,7 @@ def test_durable_queue_is_bounded_without_dropping_discovery_evidence(tmp_path):
 def test_armed_active_binary_never_reaches_scan_execution(tmp_path):
     marker=tmp_path/'unauthorized-attempt'
     binary=tmp_path/'httpx'
-    binary.write_text(f'#!{sys.executable}\nimport sys,pathlib\nif "-version" in sys.argv: print("1.12.0")\nelif "-h" in sys.argv: print("ProjectDiscovery -json -rate-limit -disable-update-check -proxy -resolvers -no-fallback-scheme -include-response-header -response-size-to-read")\nelse: pathlib.Path({str(marker)!r}).write_text("would connect outside scope");sys.exit(99)\n')
+    binary.write_text(f'#!{sys.executable}\nimport sys,pathlib\nif "-version" in sys.argv: print("1.12.0")\nelif "-h" in sys.argv: print("ProjectDiscovery -list -json -rate-limit -disable-update-check -proxy -resolvers -no-fallback-scheme -include-response-header -response-size-to-read")\nelse: pathlib.Path({str(marker)!r}).write_text("would connect outside scope");sys.exit(99)\n')
     binary.chmod(0o700)
     config=tmp_path/'scope.yaml';config.write_text('scope: {hosts: [example.com]}\nmode: demo\n')
     assert identify('httpx',str(binary)).compatible

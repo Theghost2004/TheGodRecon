@@ -18,7 +18,7 @@ from .storage import artifact_path
 def arguments(name, config):
     timeout = str(max(1,int(config.budgets.timeout)))
     rate = str(max(1,int(min(config.budgets.overall_rps,config.budgets.per_host_rps))))
-    common = ['-l','/inputs.txt','-silent','-duc','-rl',rate]
+    common = ['-list','/inputs.txt','-silent','-duc','-rl',rate]
     if name=='dnsx':
         return common+['-json','-a','-aaaa','-cname','-r','127.0.0.1:1053','-t','1','-retry','1','-timeout',timeout+'s']
     if name=='httpx':
@@ -155,9 +155,9 @@ async def run_active(scanner, name):
             if actual:
                 scanner.store.set_meta('executed:'+name,True)
             if errors:
-                detail=detail or '; '.join(errors[:10])
+                detail=detail or '; '.join(errors[:10])+'; output prefix: '+redact(result.stdout[:500])
             if result.code:
-                detail=detail or f'Process exit {result.code}: '+redact(result.stderr[-2000:])
+                detail=(detail+'; ' if detail else '')+f'Process exit {result.code}: '+redact(result.stderr[-1000:])
             if not actual:
                 detail=detail or 'Execution boundary did not confirm child process start'
             if broker and broker.failures:

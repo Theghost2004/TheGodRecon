@@ -123,6 +123,10 @@ async def proxy(reader, writer, context):
                 raise ValueError('Invalid absolute request target')
             if 'host' not in headers or origin(parsed.scheme+'://'+headers['host']) != origin(url):
                 raise ValueError('Host/request authority mismatch')
+            if tunnel:
+                # CONNECT requires a port even when the original URL omitted it.
+                # The validated Host header retains the HTTP request authority.
+                url = parsed.scheme + '://' + headers['host'] + target
             if headers.get('content-length', '0') != '0' or 'transfer-encoding' in headers:
                 raise ValueError('Request bodies are not supported')
             answer = await rpc({'kind': 'http', 'method': method, 'url': url,

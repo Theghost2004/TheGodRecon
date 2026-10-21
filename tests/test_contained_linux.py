@@ -179,3 +179,31 @@ def test_real_four_tools_strict_pipeline_reports_and_resume(tmp_path,isolated,mo
         finally:
             udp.close();await runner.cleanup()
     asyncio.run(run())
+
+
+@pytest.mark.skipif(sys.platform!='linux',reason='Linux worker; no platform backend implied')
+def test_https_proxy_preserves_original_host_authority(tmp_path,monkeypatch):
+    import base64, http.client, shutil, ssl, subprocess
+    if not shutil.which('openssl'):pytest.skip('Local TLS fixture requires OpenSSL')
+    from reconmap import isolated_worker as worker
+    messages=[]
+    async def rpc(message):
+        messages.append(message)
+        return {'allowed':True,'status':200,'body':base64.b64encode(b'fixture').decode(),'headers':{}}
+    monkeypatch.setattr(worker,'rpc',rpc)
+    subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(tmp_path/'key'),
+                    '-out',str(tmp_path/'cert'),'-subj','/CN=fixture','-days','1'],capture_output=True,check=True)
+    async def run():
+        context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(tmp_path/'cert',tmp_path/'key')
+        server=await asyncio.start_server(lambda r,w:worker.proxy(r,w,context),'127.0.0.1',0)
+        port=server.sockets[0].getsockname()[1]
+        def requests():
+            for host in ('127.0.0.1','127.0.0.1:443'):
+                conn=http.client.HTTPSConnection('127.0.0.1',port,context=ssl._create_unverified_context(),timeout=5)
+                conn.set_tunnel('127.0.0.1',443);conn.request('GET','/Case?a=1&a=2',headers={'Host':host})
+                response=conn.getresponse();assert response.status==200;response.read();conn.close()
+        try:await asyncio.to_thread(requests)
+        finally:server.close();await server.wait_closed()
+    asyncio.run(run())
+    assert [m['url'] for m in messages if m['kind']=='http']==[
+        'https://127.0.0.1/Case?a=1&a=2','https://127.0.0.1:443/Case?a=1&a=2']
