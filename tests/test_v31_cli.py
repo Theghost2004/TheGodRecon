@@ -18,7 +18,7 @@ def test_version_and_noninteractive_menu(capsys, monkeypatch):
     with pytest.raises(SystemExit) as result:
         main(['--version'])
     assert result.value.code == 0
-    assert capsys.readouterr().out.strip() == '3.1.0'
+    assert capsys.readouterr().out.strip() == '3.1.1'
     monkeypatch.setattr('builtins.input', lambda *a: pytest.fail('noninteractive prompt'))
     assert main([]) == 0
     assert 'scan' in capsys.readouterr().out

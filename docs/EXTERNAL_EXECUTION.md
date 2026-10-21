@@ -1,7 +1,7 @@
-# Contained external execution (3.1.0)
+# Contained external execution (3.1.1)
 
 BlackBox still selects all eight registered capabilities. Customized scans still
-select only their requested capabilities. No database or package version change
+select only their requested capabilities. The package version is 3.1.1; no database migration
 is required. Existing reports, graphs, analyst state and evidence layout remain.
 
 ## Linux prerequisites and verification

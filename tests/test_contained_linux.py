@@ -211,3 +211,66 @@ def test_https_proxy_preserves_original_host_authority(tmp_path,monkeypatch):
     asyncio.run(run())
     assert [m['url'] for m in messages if m['kind']=='http']==[
         'https://127.0.0.1/Case?a=1&a=2','https://127.0.0.1:443/Case?a=1&a=2']
+
+
+@pytest.mark.parametrize('name',['subfinder','urlfinder'])
+def test_real_provider_processes_with_isolated_fixture_responses(tmp_path,isolated,monkeypatch,name):
+    """Actual provider clients, actual parsers/SQLite, zero public provider traffic.
+
+    Only the invocation transport is redirected to the production namespace and
+    fixture-backed broker. This is not a mocked executable or fabricated output.
+    """
+    import datetime
+    from reconmap import integrations
+    directory=os.environ.get('RECONMAP_TEST_ACTIVE_TOOLS')
+    if not directory:
+        if os.environ.get('RECONMAP_REQUIRE_CONTAINMENT')=='1':pytest.fail('Reviewed binary directory required')
+        pytest.skip('Reviewed provider binaries required')
+    info=identify(name,str(Path(directory)/name))
+    assert info.supported,info.reason
+    target='authorized.test'
+    if name=='subfinder':
+        origin='https://api.hackertarget.com'
+        fixtures={origin+'/hostsearch/?q='+target:Response(200,{'content-type':'text/plain'},b'api.authorized.test,192.0.2.1\n')}
+        source='hackertarget'
+    else:
+        origin='https://index.commoncrawl.org'
+        year=datetime.datetime.now(datetime.UTC).year
+        fixtures={origin+'/collinfo.json':Response(200,{'content-type':'application/json'},json.dumps([
+            {'id':f'CC-MAIN-{year}-fixture','cdx-api':origin+'/fixture-index'}]).encode()),
+            origin+'/fixture-index?url=*.'+target:Response(200,{'content-type':'text/plain'},b'{"url":"https://authorized.test/historical-api"}\n')}
+        source='commoncrawl'
+    provider=make_scanner(tmp_path/'provider',origin,fixtures=fixtures)
+    provider.config.scope.lab=False
+    for url in fixtures:provider.add_url(url,'controlled-provider-fixture')
+    config=resolve_selection(default_config('https://'+target),tools=name)
+    config.scope.hosts=[target,'*.'+target]
+    config.provider_sources[name]=[source]
+    config.strict_tools=True
+    run,manifest=prepare_run(config,'https://'+target,tmp_path/'scan')
+    scanner=Scanner(run,manifest,config,{name:info})
+    processes=[]
+    async def invoke(argv,cwd,timeout,**kwargs):
+        assert argv[0]==info.path and kwargs['expected_sha']==info.sha256
+        result,broker=await boundary.run_contained(provider,info,cwd,argv[1:]+['-proxy','http://127.0.0.1:18080'],[])
+        processes.append((result,broker.metrics))
+        return result
+    monkeypatch.setattr(integrations,'execute',invoke)
+    try:
+        asyncio.run(scanner.collect_passive())
+        assert processes and processes[0][0].code==0,[(r.stderr,m) for r,m in processes]
+        assert 'RECONMAP_TOOL_STARTED' in processes[0][0].stderr
+        assert scanner.store.meta('executed:'+name) is True
+        rows=[r for r in scanner.store.rows('observations') if r['source']==name and r['kind']=='provider']
+        assert rows,processes[0][0]
+        stage=scanner.store.conn.execute('SELECT state,detail FROM stages WHERE name=?',(name,)).fetchone()
+        assert stage['state']=='completed',dict(stage)
+        assert scanner.store.meta('requests',0)==0
+        assert provider.store.meta('requests')==len(fixtures)
+        if name=='urlfinder':
+            assert any(r['kind']=='historical-discovery' for r in scanner.store.rows('observations'))
+            assert all(r['status'] is None for r in scanner.store.rows('urls'))
+        else:
+            assert any(r['host']=='api.authorized.test' for r in scanner.store.rows('hosts'))
+    finally:
+        provider.store.close();scanner.store.close()

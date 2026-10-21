@@ -27,7 +27,7 @@ jobs:
           python -m pip install --require-hashes -r requirements.lock
           python -m pip install --no-deps -e .
       - name: Install reviewed real executables
-        run: python tools/install_tools.py --tool dnsx --tool httpx --tool katana --tool nuclei --directory .tools/bin
+        run: python tools/install_tools.py --tool dnsx --tool httpx --tool katana --tool nuclei --tool subfinder --tool urlfinder --directory .tools/bin
       - name: Verify production isolation and real tools against local fixtures
         env:
           RECONMAP_REQUIRE_CONTAINMENT: '1'

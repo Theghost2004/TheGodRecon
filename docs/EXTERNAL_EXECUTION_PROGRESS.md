@@ -1,6 +1,6 @@
 # Contained external execution progress
 
-Branch: `feature/contained-external-tools`, based on `main` at `edf772a`.
+Branch: `feature/v3.1.1-external-tool-execution`, based on `main` at `edf772a`.
 
 - [x] Audit registry, adapters, strict preflight, scheduler, evidence and reporting.
 - [x] Confirm installed reviewed binaries and their supported argument syntax.
@@ -32,3 +32,8 @@ CI iteration evidence:
 - CI annotations expose fixture failures because this connection cannot read
   authenticated Actions logs. GitHub API PR creation currently returns Forbidden;
   the branch is pushed and the PR description is prepared locally.
+
+Priority amendment applied: release metadata is now **3.1.1** and the existing
+branch was renamed to `feature/v3.1.1-external-tool-execution` (same history; no
+duplicate PR). Added isolated real Subfinder/URLFinder fixture integrations.
+Kali/Linux execution has priority; the Windows native/core matrix remains intact.

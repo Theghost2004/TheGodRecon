@@ -1,4 +1,4 @@
-# TheGodRecon V3.1.0
+# TheGodRecon V3.1.1 — Linux-First Eight-Tool Execution Engine
 
 A local reconnaissance coordinator for authorized security research. Map a scoped target, combine tool evidence, and get a clear shortlist for manual investigation. Everything stays in local scan folders.
 
@@ -159,7 +159,8 @@ Keep raw evidence private. Do not scan public targets without authorization.
 
 - [BlackBox workflow, graph model and validation](docs/BLACKBOX.md)
 - [BlackBox implementation checklist](docs/BLACKBOX_PROGRESS.md)
-- [3.1.0 release, installation and verification details](docs/V3_1_RELEASE.md)
+- [3.1.1 Linux execution release](docs/V3_1_1_RELEASE.md)
+- [3.1.0 installation and verification history](docs/V3_1_RELEASE.md)
 - [Advanced commands, YAML, budgets, resume and exports](docs/ADVANCED_USAGE.md)
 - [Tool pins, installation and safety boundaries](docs/TOOLS.md)
 - [V3 architecture and intelligence pipeline](docs/V3_ARCHITECTURE.md)

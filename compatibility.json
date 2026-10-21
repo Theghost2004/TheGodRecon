@@ -173,7 +173,7 @@
     "environment.yaml": "0d3d9f7a545db5c525a541d89cead8da8dd8f20f61b6b0c35f0a1beece3adc84",
     "git-head.yaml": "e0232f98b1ab2eb3182a022f1869dc1beb2e5cb76b1376c2df6fcc0d649b3696"
   },
-  "application_version": "3.1.0",
+  "application_version": "3.1.1",
   "schema_version": 3,
   "provider_integrations": {
     "wayback-cdx": {
