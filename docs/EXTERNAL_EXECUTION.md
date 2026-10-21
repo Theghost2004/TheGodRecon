@@ -64,7 +64,11 @@ the PID namespace also removes remaining descendants. The per-process address
 space cap is 4 GiB, file-size cap 16 MiB, descriptor cap 256 and process limit 256.
 These are not an aggregate cgroup memory quota. Output is bounded by the configured
 response-byte ceiling; active invocations use the existing provider-seconds
-subprocess ceiling and the remaining global time, whichever is smaller.
+subprocess ceiling and the remaining global time, whichever is smaller. Katana
+also waits its request-timeout for queue quiescence per input root; many roots can
+therefore exhaust a short process ceiling even when individual requests are fast.
+Such runs retain their evidence and report partial coverage; the deadline is not
+silently raised.
 
 ## Actual adapters
 

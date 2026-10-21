@@ -40,6 +40,10 @@ def make_scanner(tmp_path,target,tools='4',strict=True,fixtures=None):
     config.strict_tools=strict;config.budgets.depth=3
     config.budgets.per_host_rps=50;config.budgets.overall_rps=50
     config.budgets.requests=40;config.budgets.provider_seconds=30
+    # Katana waits one request-timeout for queue quiescence per input root.
+    # This local fixture needs no Internet latency; keep three roots inside the
+    # deliberately short process ceiling instead of consuming 3 * 15 seconds.
+    config.budgets.timeout=2
     run,manifest=prepare_run(config,target,tmp_path)
     return Scanner(run,manifest,config,{},fixtures)
 
