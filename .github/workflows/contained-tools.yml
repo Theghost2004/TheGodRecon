@@ -7,6 +7,7 @@ jobs:
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      fail-fast: false
       matrix:
         python: ['3.12', '3.13']
     steps:
@@ -33,6 +34,21 @@ jobs:
           RECONMAP_REQUIRE_CONTAINMENT: '1'
           RECONMAP_TEST_ACTIVE_TOOLS: .tools/bin
         run: python -m pytest -q tests/test_execution_boundary.py tests/test_contained_linux.py --junitxml=contained-results.xml
+      - name: Publish fixture failure diagnostics
+        if: always()
+        run: |
+          python - <<'PYTHON'
+          import pathlib, xml.etree.ElementTree as ET
+          report = pathlib.Path('contained-results.xml')
+          if report.exists():
+              for case in ET.parse(report).iter('testcase'):
+                  for failure in list(case):
+                      if failure.tag not in {'failure', 'error'}:
+                          continue
+                      detail = (failure.text or failure.get('message', ''))[-14000:]
+                      detail = detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print(f"::error title={case.get('name')}::{detail}")
+          PYTHON
       - uses: actions/upload-artifact@v4
         if: always()
         with:
