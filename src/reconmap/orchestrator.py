@@ -79,7 +79,11 @@ def record_execution(scanner, name, *, engine=None, state="completed", reason=""
         result.primary_status = "native-selected"
     result.discovered_records += count
     result.duration_seconds = round(result.duration_seconds + seconds, 6)
-    result.request_accounting.update(accounting or {})
+    for key, value in (accounting or {}).items():
+        if process is not None and key in {'http_requests', 'dns_queries', 'reused_responses', 'denied_requests'}:
+            result.request_accounting[key] = result.request_accounting.get(key, 0) + value
+        else:
+            result.request_accounting[key] = value
     if process is not None:
         result.process_executions.append(process)
     result.status = state

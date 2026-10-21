@@ -180,6 +180,7 @@ async def run_active(scanner, name):
             process={'executable':info.path,'sha256':info.sha256,'version':info.version,'executed':actual,
                      'exit_code':result.code if result else None,'input_count':len(inputs),'output_count':len(records),
                      'completed_inputs':len(completed),
-                     'duration_seconds':round(time.monotonic()-started,6),'backend':BACKEND},
+                     'duration_seconds':round(time.monotonic()-started,6),'backend':BACKEND,
+                     'request_accounting':dict(broker.metrics) if broker else {}},
             limitations=[detail] if detail else [])
     return state=='completed'

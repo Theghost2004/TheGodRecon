@@ -247,3 +247,15 @@ def test_dns_broker_enforces_rate_without_trusting_tool_flags(scanner, monkeypat
         assert (await broker.dispatch(message))['allowed']
     asyncio.run(run())
     assert waits==[1.0] and scanner.store.meta('dns_operations')==2
+
+
+def test_repeated_tool_invocations_accumulate_measured_usage(scanner):
+    from reconmap.orchestrator import record_execution
+    for value in (2,3):
+        record_execution(scanner,'httpx',state='completed',process={'request_accounting':{'http_requests':value}},
+                         accounting={'http_requests':value,'reused_responses':1,'backend':boundary.BACKEND})
+    row=scanner.store.conn.execute('SELECT result_json FROM stage_results WHERE name=?',(STAGE_NAMES['httpx'],)).fetchone()
+    data=json.loads(row[0])
+    assert data['request_accounting']['http_requests']==5
+    assert data['request_accounting']['reused_responses']==2
+    assert len(data['process_executions'])==2

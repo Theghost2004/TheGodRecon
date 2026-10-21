@@ -160,7 +160,7 @@ def test_real_four_tools_strict_pipeline_reports_and_resume(tmp_path,isolated,mo
             store=Store(run_path)
             try:
                 results={r['name']:json.loads(r['result_json']) for r in store.rows('stage_results')}
-                assert state=='completed',json.dumps(results,indent=2)
+                assert state=='completed',json.dumps({name:{k:r[k] for k in ('status','failure_reason','request_accounting')} for name,r in results.items()}) + str([dict(r) for r in store.rows('stages') if r['state']=='failed'])
                 for name in infos:
                     assert store.meta('executed:'+name) is True,name
                 assert questions and all(host=='localhost.' for host,_ in questions)

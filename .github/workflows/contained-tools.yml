@@ -44,7 +44,7 @@ jobs:
                   for failure in list(case):
                       if failure.tag not in {'failure', 'error'}:
                           continue
-                      detail = (failure.text or failure.get('message', ''))[-14000:]
+                      detail = (failure.text or failure.get('message', ''))[-3500:]
                       detail = detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
                       print(f"::error title={case.get('name')}::{detail}")
           PYTHON
