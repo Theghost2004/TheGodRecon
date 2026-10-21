@@ -224,3 +224,26 @@ def test_namespace_failure_never_spawns_tool(scanner,tmp_path,monkeypatch):
     monkeypatch.setattr(boundary,'execute',lambda *a,**k:pytest.fail('Uncontained execution'))
     with pytest.raises(ValueError,match='user namespace disabled'):
         asyncio.run(boundary.run_contained(scanner,scanner.tools['httpx'],tmp_path,[],[]))
+
+
+def test_dns_broker_enforces_rate_without_trusting_tool_flags(scanner, monkeypatch):
+    scanner.config.scope.hosts=['authorized.test']
+    scanner.config.budgets.overall_rps=2
+    scanner.config.budgets.per_host_rps=1
+    now=[100.0];waits=[]
+    monkeypatch.setattr(boundary.time,'monotonic',lambda:now[0])
+    # Scheduler uses the same monotonic clock; reset its origin for this fixture.
+    scanner.scheduler.started=now[0]
+    async def sleep(seconds):
+        waits.append(seconds);now[0]+=seconds
+    async def udp(query,*args,**kwargs):return dns.message.make_response(query)
+    monkeypatch.setattr(boundary.asyncio,'sleep',sleep)
+    monkeypatch.setattr(boundary.dns.asyncquery,'udp',udp)
+    monkeypatch.setattr(boundary.dns.resolver,'Resolver',lambda:SimpleNamespace(nameservers=['127.0.0.1'],port=1054))
+    broker=boundary.Broker(scanner,'dnsx')
+    message={'kind':'dns','wire':base64.b64encode(dns.message.make_query('authorized.test','A').to_wire()).decode()}
+    async def run():
+        assert (await broker.dispatch(message))['allowed']
+        assert (await broker.dispatch(message))['allowed']
+    asyncio.run(run())
+    assert waits==[1.0] and scanner.store.meta('dns_operations')==2
