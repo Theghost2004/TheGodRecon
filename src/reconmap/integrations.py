@@ -88,8 +88,14 @@ async def _collect_passive(scanner, names):
             cwd = invocation_directory(scanner, name)
             result, error = await invoke(scanner, info, cwd)
             records, errors = parse_records(name, result.stdout)
-            state = "failed" if result.code != 0 or error else "partial" if errors or re.search(r"(?i)\b(error|ERR|FTL|failed|timeout|denied|forbidden|could not)\b", result.stderr) else "completed"
+            provider_error = re.search(r"(?i)\b(error|ERR|FTL|failed|timeout|denied|forbidden|could not)\b", result.stderr)
+            state = "failed" if result.code != 0 or error else "partial" if errors or provider_error else "completed"
             detail = error or "; ".join(errors[:20]) or (f"Exit {result.code}; valid partial records retained" if result.code else "Provider requests are not measured")
+            if provider_error and not error and not errors:
+                detail = 'Provider reported incomplete execution: '+redact(result.stderr[-1500:])
+            if name == 'urlfinder' and 'commoncrawl' in scanner.config.provider_sources.get(name, []):
+                state = 'partial' if state == 'completed' else state
+                detail += '; Pinned URLFinder CommonCrawl parser cannot consume standard CDX records; select provider_sources.urlfinder: [alienvault]'
             if len(records) > scanner.config.budgets.provider_results:
                 scanner.limit("provider result cap reached")
                 state = "partial"

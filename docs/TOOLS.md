@@ -30,7 +30,7 @@ This is an explicit maintenance action. It downloads official pinned release arc
 
 jsluice's official source build is optional (Linux needs Go and a C compiler; Windows needs a compatible native C compiler). Clone the official repository into a tool-install directory, checkout the exact commit above, then run `go build -o ./bin/jsluice ./cmd/jsluice` (Windows: `go build -o .\bin\jsluice.exe .\cmd\jsluice`). Do not change dependencies/checksums or disable Go verification. This cloud installed Go from an official checksum-verified archive and built the exact commit, with caches under `/workspace/tooling/go-cache` and `/workspace/tooling/go-packages`. Prepared Linux binaries are under `/workspace/tooling/bin`; these locations are outside all scan runs and contain no target artifacts.
 
-Default providers are Subfinder `crtsh` (HTTPS `crt.sh`) and URLFinder `commoncrawl` (HTTPS `index.commoncrawl.org`). Reviewed optional choices are `hackertarget` (`api.hackertarget.com`) and `alienvault` (`otx.alienvault.com`). Configure network access for selected providers independently of target scope. The platform's current package-manager allowlist does not imply access to these providers or real target hosts. Never widen target scope to resolve an egress failure. Provider API credentials, if needed, belong in the tool's excluded local provider YAML; pass its path via `RECONMAP_SUBFINDER_PROVIDER_CONFIG` or `RECONMAP_URLFINDER_PROVIDER_CONFIG`. Values are not copied into scan configs or logs. Tools receive isolated local homes to prevent default output outside the run.
+Default providers are Subfinder `crtsh` (HTTPS `crt.sh`) and URLFinder `alienvault` (HTTPS `otx.alienvault.com`). Reviewed optional choices are `hackertarget` (`api.hackertarget.com`) and legacy `commoncrawl` (`index.commoncrawl.org`). Configure network access for selected providers independently of target scope. The platform's current package-manager allowlist does not imply access to these providers or real target hosts. Never widen target scope to resolve an egress failure. Provider API credentials, if needed, belong in the tool's excluded local provider YAML; pass its path via `RECONMAP_SUBFINDER_PROVIDER_CONFIG` or `RECONMAP_URLFINDER_PROVIDER_CONFIG`. Values are not copied into scan configs or logs. Tools receive isolated local homes to prevent default output outside the run.
 
 The Nuclei-compatible local allowlist is **two** reviewed templates under `src/reconmap/templates`: a single GET to `.git/HEAD` and a single GET to `.env`, status/signature matching, redirects off, 4096-byte evidence. `compatibility.json` pins each file by hash. The native profile implements those signatures under the shared scope/scheduler and also collects bounded OpenAPI/Swagger leads. CORS observations remain contextual; no CVE exploitation or automatic takeover validation is included. The contained Nuclei adapter executes only those two templates, verifies their hashes, and requires captured response signatures before adding exposure candidates. Bulk template parity is not claimed.
 
@@ -99,3 +99,16 @@ only existing seed/reference inventory is available. CDX requires prior explicit
 Wayback selection. The four active binaries require the verified Linux boundary. Windows currently
 has no equivalent backend and therefore retains non-strict native fallbacks. Unreviewed jsluice builds retain the native fallback;
 there is no automatic trust/download update.
+
+## V3.1.1 provider correction
+
+New configurations select the reviewed AlienVault URLFinder source. Source review
+and isolated fixtures showed that pinned URLFinder 0.0.3 applies a whole-line URL
+regex to Common Crawl CDX records and can silently return no URLs. Existing YAML
+that explicitly selects `commoncrawl` remains valid, but records partial coverage
+with a repair message; select `provider_sources: {urlfinder: [alienvault]}`.
+The default Subfinder `crtsh` source may try PostgreSQL on crt.sh before its HTTPS
+fallback; those provider operations have separate, unmeasured provider accounting.
+The isolated Subfinder fixture uses the reviewed HTTPS `hackertarget` source.
+No public provider availability or exhaustive collection claim follows from these
+fixtures. V3.1.1 also creates URLFinder's missing per-invocation configuration parent.

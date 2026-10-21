@@ -37,6 +37,11 @@ reconmap scan https://authorized.example --config scope.yaml --tools subfinder,h
 ```
 
 The first command selects all eight capabilities. The second honors its subset.
+New configurations use the reviewed AlienVault URLFinder source. Existing
+explicit Common Crawl selections are preserved and diagnosed as partial because
+the pinned tool cannot parse standard CDX record lines. URLFinder's per-invocation
+configuration directory is now created before launch.
+
 SecLists remains an optional setup dependency and is never downloaded during scans.
 
 ## Verify without public targets

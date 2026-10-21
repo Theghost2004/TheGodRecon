@@ -211,7 +211,7 @@ def command(info: ToolInfo, target_host: str, cwd: Path, seconds: int, input_pat
     if info.name == "subfinder":
         return [info.path, "-d", target_host, "-json", "-cs", "-silent", "-duc", "-s", ",".join(sources or ["crtsh"]), "-rl", "2", "-timeout", str(min(seconds, 15)), "-max-time", "1"]
     if info.name == "urlfinder":
-        return [info.path, "-d", target_host, "-j", "-cs", "-silent", "-duc", "-s", ",".join(sources or ["commoncrawl"]), "-fs", "fqdn", "-rl", "2", "-timeout", str(min(seconds, 15)), "-max-time", "1"]
+        return [info.path, "-d", target_host, "-j", "-cs", "-silent", "-duc", "-s", ",".join(sources or ["alienvault"]), "-fs", "fqdn", "-rl", "2", "-timeout", str(min(seconds, 15)), "-max-time", "1"]
     if info.name == "gitleaks" and input_path:
         return [info.path, "dir", str(input_path.resolve()), "--no-banner", "--redact=100", "--report-format", "json", "--report-path", str((cwd / "findings.json").resolve()), "--exit-code", "10", "--max-target-megabytes", "10"]
     if info.name == "jsluice" and input_path:

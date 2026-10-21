@@ -232,7 +232,6 @@ def test_real_provider_processes_with_isolated_fixture_responses(tmp_path,isolat
     Only the invocation transport is redirected to the production namespace and
     fixture-backed broker. This is not a mocked executable or fabricated output.
     """
-    import datetime
     from reconmap import integrations
     directory=os.environ.get('RECONMAP_TEST_ACTIVE_TOOLS')
     if not directory:
@@ -246,12 +245,11 @@ def test_real_provider_processes_with_isolated_fixture_responses(tmp_path,isolat
         fixtures={origin+'/hostsearch/?q='+target:Response(200,{'content-type':'text/plain'},b'api.authorized.test,192.0.2.1\n')}
         source='hackertarget'
     else:
-        origin='https://index.commoncrawl.org'
-        year=datetime.datetime.now(datetime.UTC).year
-        fixtures={origin+'/collinfo.json':Response(200,{'content-type':'application/json'},json.dumps([
-            {'id':f'CC-MAIN-{year}-fixture','cdx-api':origin+'/fixture-index'}]).encode()),
-            origin+'/fixture-index?url=*.'+target:Response(200,{'content-type':'text/plain'},b'{"url":"https://authorized.test/historical-api"}\n')}
-        source='commoncrawl'
+        origin='https://otx.alienvault.com'
+        fixtures={origin+'/api/v1/indicators/domain/'+target+'/url_list?page=1':
+            Response(200,{'content-type':'application/json'},json.dumps({
+                'url_list':[{'url':'https://authorized.test/historical-api'}],'has_next':False}).encode())}
+        source='alienvault'
     provider=make_scanner(tmp_path/'provider',origin,fixtures=fixtures)
     provider.config.scope.lab=False
     for url in fixtures:provider.add_url(url,'controlled-provider-fixture')
