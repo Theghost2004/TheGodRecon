@@ -545,7 +545,7 @@ class Scanner:
         self.manifest.update({"state":"running","updated":timestamp()})
         atomic_json(self.run / "manifest.json", self.manifest)
         self.store.execute("UPDATE jobs SET state='queued' WHERE state='running'")
-        self.store.stage("core", "running", "Native sequential scheduler")
+        self.store.stage("core", "running", "Shared bounded request scheduler")
         try:
             from .orchestrator import run_pipeline
             await run_pipeline(self)
@@ -563,7 +563,7 @@ class Scanner:
                 if self.config.mode in {"passive", "offline"} and module in {"http","crawl","checks"}:
                     self.store.stage(module,"skipped","Passive mode makes no target HTTP/TLS requests")
                 elif not previous or previous[0] not in {"partial","failed"}:
-                    self.store.stage(module,"partial" if self.limits else "completed",f"Native {module}; scope and budgets retained")
+                    self.store.stage(module,"partial" if self.limits else "completed",f"Shared {module} evidence; see capability execution records; scope and budgets retained")
             if self.limits or any(s["state"] in {"partial","failed","degraded","blocked-by-policy","unavailable","incompatible"} for s in self.store.rows("stages")):
                 state = "partial"
         except BudgetStop as exc:

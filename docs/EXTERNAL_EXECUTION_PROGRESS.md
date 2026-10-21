@@ -20,3 +20,15 @@ Windows retains native fallback until an equivalent backend is implemented and t
 Local Linux Python 3.12 regression: **432 passed, 6 skipped** (22.25s), including
 real offline Gitleaks/jsluice fixtures. The six skipped cases require the optional
 Linux isolation backend. Real active execution has not yet been validated.
+
+CI iteration evidence:
+
+- `c99c6b7`: Linux namespace probes and real dnsx/httpx/Nuclei localhost execution
+  completed. Katana failed because its input flag is `-list`, not `-l`; the HTTPS
+  adversarial fixture exposed implicit-port reconstruction. Neither failure was
+  hidden by fallback (the integration uses strict tools).
+- `4a72dc4`: corrected both defects, retained explicit port/case/query identities,
+  added a real local TLS proxy regression and improved bounded failure diagnostics.
+- CI annotations expose fixture failures because this connection cannot read
+  authenticated Actions logs. GitHub API PR creation currently returns Forbidden;
+  the branch is pushed and the PR description is prepared locally.
