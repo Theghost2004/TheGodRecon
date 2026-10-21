@@ -122,7 +122,8 @@ def test_isolated_process_limits_and_partial_prefix(tmp_path,isolated,failure):
     finally:scanner.store.close()
 
 
-def test_real_four_tools_strict_pipeline_reports_and_resume(tmp_path,isolated,monkeypatch):
+@pytest.mark.parametrize('scheme',['http','https'])
+def test_real_four_tools_strict_pipeline_reports_and_resume(tmp_path,isolated,monkeypatch,scheme):
     directory=os.environ.get('RECONMAP_TEST_ACTIVE_TOOLS')
     if not directory:
         if os.environ.get('RECONMAP_REQUIRE_CONTAINMENT')=='1':pytest.fail('Reviewed active binary directory required')
@@ -154,9 +155,20 @@ def test_real_four_tools_strict_pipeline_reports_and_resume(tmp_path,isolated,mo
             return aiohttp.web.Response(text=body,content_type=mime,status=200 if request.path in bodies else 404)
         app=aiohttp.web.Application();app.router.add_route('*','/{path:.*}',handler)
         runner=aiohttp.web.AppRunner(app);await runner.setup()
-        site=aiohttp.web.TCPSite(runner,'127.0.0.1',0);await site.start()
+        context=None
+        if scheme=='https':
+            import ssl,subprocess
+            cert,key=tmp_path/'target-cert.pem',tmp_path/'target-key.pem'
+            subprocess.run(['openssl','req','-x509','-newkey','rsa:2048','-nodes','-keyout',str(key),
+                '-out',str(cert),'-subj','/CN=localhost','-addext','subjectAltName=DNS:localhost','-days','1'],capture_output=True,check=True)
+            context=ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER);context.load_cert_chain(cert,key)
+            # Trust only this fixture's CA; production TLS validation is unchanged.
+            trusted=ssl.create_default_context(cafile=str(cert))
+            connector=aiohttp.TCPConnector
+            monkeypatch.setattr(boundary.aiohttp,'TCPConnector',lambda **kw:connector(ssl=trusted,**kw))
+        site=aiohttp.web.TCPSite(runner,'127.0.0.1',0,ssl_context=context);await site.start()
         port=site._server.sockets[0].getsockname()[1]
-        scanner=make_scanner(tmp_path,f'http://localhost:{port}/',tools='3,4,5,8')
+        scanner=make_scanner(tmp_path,f'{scheme}://localhost:{port}/',tools='3,4,5,8')
         scanner.tools=infos
         run_path=scanner.run
         try:
