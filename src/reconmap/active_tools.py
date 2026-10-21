@@ -170,6 +170,10 @@ async def run_active(scanner, name):
             completed=[]
             if interrupted:state='interrupted'
         count=ingest(scanner,name,records,str(cwd.relative_to(scanner.run)))
+        if count < len(records):
+            detail = detail or f'{len(records)-count} structured records failed evidence validation'
+            if state == 'completed':
+                state = 'partial'
         if state=='completed':
             for value in inputs:
                 scanner.store.set_meta(checkpoint(name,value),True)

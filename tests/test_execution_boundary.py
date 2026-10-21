@@ -274,3 +274,15 @@ def test_katana_script_admission_keeps_method_depth_and_provenance(scanner):
         assert not (await broker.dispatch(request(base+'/api/change')))['allowed']
     asyncio.run(run())
     assert scanner.store.meta('requests')==3
+
+
+def test_structured_but_invalid_url_is_partial_without_losing_http_evidence(scanner,monkeypatch):
+    async def run(scanner,info,cwd,argv,inputs):
+        broker=boundary.Broker(scanner,'httpx');await broker.dispatch(request())
+        return ProcessResult(0,'{"url":"https://user:password@127.0.0.1/"}','RECONMAP_TOOL_STARTED'),broker
+    monkeypatch.setattr(active,'run_contained',run)
+    assert not asyncio.run(active.run_active(scanner,'httpx'))
+    result=json.loads(scanner.store.rows('stage_results')[0]['result_json'])
+    assert result['status']=='partial' and 'failed evidence validation' in result['failure_reason']
+    assert scanner.store.meta('requests')==1
+    assert any(r['kind']=='http' for r in scanner.store.rows('observations'))
