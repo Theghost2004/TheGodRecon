@@ -274,9 +274,9 @@ def test_real_provider_processes_with_isolated_fixture_responses(tmp_path,isolat
         assert 'RECONMAP_TOOL_STARTED' in processes[0][0].stderr
         assert scanner.store.meta('executed:'+name) is True
         rows=[r for r in scanner.store.rows('observations') if r['source']==name and r['kind']=='provider']
-        assert rows,processes[0][0]
+        assert rows,(processes[0][0], [(r['subject'],r['data']) for r in provider.store.rows('observations')])
         stage=scanner.store.conn.execute('SELECT state,detail FROM stages WHERE name=?',(name,)).fetchone()
-        assert stage['state']=='completed',dict(stage)
+        assert stage['state']=='completed',(dict(stage),processes[0][0].stderr)
         assert scanner.store.meta('requests',0)==0
         assert provider.store.meta('requests')==len(fixtures)
         if name=='urlfinder':
