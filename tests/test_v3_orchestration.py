@@ -262,3 +262,26 @@ def test_native_process_paths_with_spaces_do_not_use_shell(tmp_path):
         result = await execute([sys.executable, str(script), 'literal; $(not-a-command) & value'], directory, 5)
         assert result.code == 0 and result.stdout.strip() == 'literal; $(not-a-command) & value'
     asyncio.run(run())
+
+
+def test_strict_empty_javascript_does_not_claim_native_fallback(tmp_path,monkeypatch):
+    scanner=instance(tmp_path)
+    scanner.config.strict_tools=True
+    artifact(scanner)
+    async def run(*args,**kwargs):return ProcessResult(0,'','')
+    monkeypatch.setattr('reconmap.integrations.execute',run)
+    def forbidden(*args,**kwargs):raise AssertionError('Strict mode ran native analysis')
+    monkeypatch.setattr('reconmap.integrations.native_artifact',forbidden)
+    try:
+        asyncio.run(scanner.local_tools())
+        reports=[json.loads(r['data']) for r in scanner.store.rows('observations') if r['kind']=='artifact-analysis']
+        assert reports and not reports[0]['fallback']
+        assert 'not executed' in reports[0]['reason']
+        execution=result(scanner)['process_executions'][0]
+        assert execution['executed'] and execution['exit_code']==0 and execution['output_count']==0
+    finally:scanner.store.close()
+
+
+def test_provider_config_parent_exists_inside_isolated_home(tmp_path):
+    command=[sys.executable,'-c',"import os,pathlib;assert (pathlib.Path(os.environ['XDG_CONFIG_HOME'])/'urlfinder').is_dir()"]
+    assert asyncio.run(execute(command,tmp_path,5)).code==0
