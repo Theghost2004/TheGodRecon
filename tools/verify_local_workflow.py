@@ -107,7 +107,12 @@ def verify(root, overrides):
         config.budgets.retries = 0
         scope = root / 'local-scope.yaml'
         scope.write_text(yaml.safe_dump(config.model_dump()), encoding='utf-8')
-        tool_args = [arg for value in overrides for arg in ('--tool', value)]
+        # This smoke workflow exercises native fallbacks and offline adapters.
+        # Keep it deterministic on machines with an operational active boundary;
+        # real active execution is covered by test_contained_linux.py instead.
+        missing = [f'{name}={root / "missing-tools" / name}'
+                   for name in ('subfinder', 'urlfinder', 'dnsx', 'httpx', 'katana', 'nuclei')]
+        tool_args = [arg for value in [*missing, *overrides] for arg in ('--tool', value)]
         command(['scan', '--target', target, '--config', str(scope), '--tools', 'all', '--enrich', 'tech,dedup,priority', '--output-root', str(root), *tool_args], 2)
         run = root / '127.0.0.1'
         report = json.loads((run / 'reports/investigation.json').read_text())

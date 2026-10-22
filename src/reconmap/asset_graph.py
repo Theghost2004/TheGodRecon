@@ -222,6 +222,7 @@ def build_graph(store, records=None, candidates=None):
     stage_results = [json.loads(r['result_json']) for r in store.rows('stage_results')]
     runs = store.rows('runs')
     graph['summary'] = {'execution_state': runs[-1]['state'] if runs else 'unknown',
+        'target':runs[-1]['target'] if runs else None,
         'workflow':config.get('workflow','scan'),
         'capability_coverage':[{k:r.get(k) for k in ('stage','selected_primary_tool','actual_execution_engines','status','failure_reason','coverage_limitations')} for r in stage_results],
         'nodes':len(graph['nodes']), 'edges':len(graph['edges']),

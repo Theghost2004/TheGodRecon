@@ -138,12 +138,12 @@ const { chromium } = require(process.env.RECONMAP_PLAYWRIGHT_MODULE || 'playwrig
         await page.evaluate(() => scrollTo(0, 0));
         await page.screenshot({ path: path.join(directory, 'wordlists.png'), fullPage: true });
       });
-      await check('tool coverage distinguishes restriction and actual engine', async () => {
+      await check('tool coverage distinguishes missing prerequisites and actual engine', async () => {
         await reset();
         await select('filter', 'Tool Execution and Coverage');
         assert.equal(await visible().count(), 8);
         const http = visible().filter({ hasText: 'httpx |' }).first();
-        assert.match(await http.innerText(), /blocked-by-policy/);
+        assert.match(await http.innerText(), /unavailable|incompatible|blocked-by-policy/);
         assert.match(await http.innerText(), /native-aiohttp/);
         assert.match(await http.innerText(), /Ran: False/);
         await page.evaluate(() => scrollTo(0, 0));

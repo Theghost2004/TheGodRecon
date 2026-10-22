@@ -83,7 +83,10 @@ def render_map(graph, report_href="../reports/index.html"):
     payload=json.dumps(graph,ensure_ascii=True).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')
     digest=base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
     summary=graph['summary']
-    title=next((n['label'] for n in graph['nodes'] if n['type']=='domain'),'Application surface')
+    # Node ordering is a stable hash order, not a statement of target ownership.
+    # An unrelated domain must never become the title of an engagement map.
+    title=summary.get('target') or next((n.get('url',n['label']) for n in graph['nodes']
+        if 'user-selected-target' in n.get('states',[])), 'Application surface')
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-{digest}'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>TheGodRecon · Asset map · {html.escape(title)}</title><style>

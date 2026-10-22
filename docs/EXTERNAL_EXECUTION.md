@@ -108,7 +108,7 @@ Production Linux isolation and **real** pinned active tools against controlled
 loopback HTTP/DNS fixtures:
 
 ```sh
-python tools/install_tools.py --tool dnsx --tool httpx --tool katana --tool nuclei --directory .tools/bin
+python tools/install_tools.py --tool subfinder --tool urlfinder --tool dnsx --tool httpx --tool katana --tool nuclei --directory .tools/bin
 RECONMAP_REQUIRE_CONTAINMENT=1 RECONMAP_TEST_ACTIVE_TOOLS=.tools/bin python -m pytest -q tests/test_contained_linux.py
 python -m pytest -q
 ```

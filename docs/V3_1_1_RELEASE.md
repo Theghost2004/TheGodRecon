@@ -18,7 +18,8 @@ Provision the optional system dependencies, then run the application unprivilege
 
 ```sh
 sudo apt-get install bubblewrap openssl python3 python3-venv
-python tools/bootstrap.py
+python3 tools/bootstrap.py
+source .venv/bin/activate
 reconmap --version
 reconmap doctor
 reconmap tools doctor --json
@@ -75,3 +76,54 @@ request usage and coverage limitations accompany the collected evidence.
 See [execution architecture and limitations](EXTERNAL_EXECUTION.md) and the
 [progress and verification record](EXTERNAL_EXECUTION_PROGRESS.md). No merge to
 `main` is performed automatically.
+
+## Files changed
+
+New execution modules are `active_tools.py`, `execution_boundary.py` and
+`isolated_worker.py`. Existing CLI, orchestrator, evidence store and report/graph
+workflows are extended in place. Full changed-file inventory from the base commit:
+
+```text
+.gitattributes
+.github/workflows/contained-tools.yml
+.github/workflows/test.yml
+README.md
+compatibility.json
+docs/ARCHITECTURE.md
+docs/EXTERNAL_EXECUTION.md
+docs/EXTERNAL_EXECUTION_PROGRESS.md
+docs/TOOLS.md
+docs/V3_1_1_RELEASE.md
+pyproject.toml
+src/reconmap/__init__.py
+src/reconmap/active_tools.py
+src/reconmap/adapters.py
+src/reconmap/analysis.py
+src/reconmap/asset_graph.py
+src/reconmap/asset_map.py
+src/reconmap/cli.py
+src/reconmap/commands_v2.py
+src/reconmap/config.py
+src/reconmap/content_discovery.py
+src/reconmap/coverage.py
+src/reconmap/engine.py
+src/reconmap/environment.py
+src/reconmap/execution_boundary.py
+src/reconmap/integrations.py
+src/reconmap/isolated_worker.py
+src/reconmap/orchestrator.py
+src/reconmap/progress.py
+src/reconmap/setup.py
+src/reconmap/tool_registry.py
+tests/test_asset_graph.py
+tests/test_blackbox.py
+tests/test_contained_linux.py
+tests/test_execution_boundary.py
+tests/test_v2_cli.py
+tests/test_v2_integrations.py
+tests/test_v2_reruns.py
+tests/test_v31_cli.py
+tests/test_v3_orchestration.py
+tools/check_report_browser.cjs
+tools/verify_local_workflow.py
+```
