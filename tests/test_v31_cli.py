@@ -18,7 +18,7 @@ def test_version_and_noninteractive_menu(capsys, monkeypatch):
     with pytest.raises(SystemExit) as result:
         main(['--version'])
     assert result.value.code == 0
-    assert capsys.readouterr().out.strip() == '3.1.0'
+    assert capsys.readouterr().out.strip() == '3.1.1'
     monkeypatch.setattr('builtins.input', lambda *a: pytest.fail('noninteractive prompt'))
     assert main([]) == 0
     assert 'scan' in capsys.readouterr().out
@@ -86,12 +86,12 @@ def test_saved_defaults_cli_override_and_effective_config(tmp_path, monkeypatch)
     assert not (tmp_path/'saved root').exists()
 
 
-def test_offline_all_tools_reports_policy_blocks_and_no_false_success(tmp_path, capsys):
+def test_offline_all_tools_reports_missing_binaries_and_no_false_success(tmp_path, capsys):
     root = tmp_path/'runs'
     overrides = [item for name in BY_NAME for item in ['--tool', f'{name}={tmp_path/name}']]
     assert main(['scan','example.com','--all-tool','--mode','demo','--no-progress','--output-root',str(root),*overrides]) == 2
     output = capsys.readouterr().out
-    assert '\x1b' not in output and 'Native fallback' in output and 'blocked-by-policy' in output
+    assert '\x1b' not in output and 'Native fallback' in output and 'unavailable' in output
     report = json.loads((root/'example.com/reports/investigation.json').read_text())['summary']
     assert len(report['selected_tools']) == 8 and report['executed_tools'] == []
     assert report['target_requests'] > 0

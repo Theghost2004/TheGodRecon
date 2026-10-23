@@ -53,6 +53,7 @@ class Scheduler:
         self.next_global = 0.0
         self.next_host: dict[str, float] = {}
         self.retry_at: dict[str, float] = {}
+        self._reservation_lock = asyncio.Lock()
 
     def check_time(self) -> None:
         if self.remaining() <= 0:
@@ -62,6 +63,10 @@ class Scheduler:
         return max(0.0, self.config.budgets.minutes * 60 - self.elapsed - (time.monotonic() - self.started))
 
     async def reserve(self, url: str, offline: bool = False) -> None:
+        async with self._reservation_lock:
+            await self._reserve(url, offline)
+
+    async def _reserve(self, url: str, offline: bool = False) -> None:
         self.check_time()
         count = int(self.store.meta("requests", 0))
         if count >= self.config.budgets.requests:
@@ -215,6 +220,7 @@ class Scanner:
         self.fixtures = fixtures
         self.limits: list[str] = list(self.store.meta("limits", []))
         self.session: aiohttp.ClientSession | None = None
+        self.native_checks_enabled = 'nuclei' not in config.modules
 
     def limit(self, reason: str) -> None:
         if reason not in self.limits:
@@ -350,7 +356,7 @@ class Scanner:
             cap = min(4096,self.config.budgets.response_bytes) if urlsplit(url).path in {"/.git/HEAD","/.env"} else self.config.budgets.response_bytes
             return await bounded_response(response, cap)
 
-    def process_response(self, url: str, response: Response, depth: int, attempt: int) -> None:
+    def process_response(self, url: str, response: Response, depth: int, attempt: int, source: str = 'native') -> None:
         content_type = response.headers.get("content-type", "").split(";",1)[0].strip().lower()
         text = response.body.decode("utf-8", errors="replace")
         kind = "map" if urlsplit(url).path.lower().endswith(".map") else "js" if "javascript" in content_type or urlsplit(url).path.lower().endswith((".js", ".mjs")) else "content"
@@ -370,12 +376,12 @@ class Scanner:
         self.store.execute("UPDATE hosts SET state=? WHERE host=?", (state, urlsplit(url).hostname))
         self.store.observed(url, "http", {"status": response.status, "method": "GET", "headers": redact_data(response.headers), "hash": digest, "bytes": len(response.body), "truncated": response.truncated, "attempt": attempt,
             "response_features": {"password_form": bool(parser.password_input and parser.forms), "form_count": len(parser.forms)},
-            "technology_hints": {k:v for k,v in response.headers.items() if k in {"server","x-powered-by"}}}, "native", identity=f"http:{url}:{attempt}")
+            "technology_hints": {k:v for k,v in response.headers.items() if k in {"server","x-powered-by"}}}, source, identity=f"http:{url}:{attempt}")
         if response.truncated:
             self.limit("response body/decompression cap reached")
         if response.headers.get("location") and 300 <= response.status < 400:
             self.add_reference(url, response.headers["location"], "redirect", depth+1)
-        if "checks" in self.config.modules:
+        if "checks" in self.config.modules and self.native_checks_enabled:
             basic_checks(self.store, url, text, response.headers, digest, response.status)
         if "analysis" in self.config.modules:
             if capability_enabled(self.config, "gitleaks") and "gitleaks" not in self.config.modules:
@@ -497,8 +503,12 @@ class Scanner:
             if row["hash"]:
                 self.store.relate(row["url"], "content-group:" + row["hash"], "exact_response_group", "native")
 
-    async def crawl(self) -> None:
+    async def crawl(self, max_jobs: int | None = None) -> None:
+        processed = 0
         while job := self.store.conn.execute("SELECT * FROM jobs WHERE state='queued' ORDER BY depth,rowid LIMIT 1").fetchone():
+            if max_jobs is not None and processed >= max_jobs:
+                break
+            processed += 1
             self.scheduler.check_time()
             self.check_disk_budget()
             url, depth = job["url"], job["depth"]
@@ -535,10 +545,15 @@ class Scanner:
         self.manifest.update({"state":"running","updated":timestamp()})
         atomic_json(self.run / "manifest.json", self.manifest)
         self.store.execute("UPDATE jobs SET state='queued' WHERE state='running'")
-        self.store.stage("core", "running", "Native sequential scheduler")
+        self.store.stage("core", "running", "Shared bounded request scheduler")
         try:
             from .orchestrator import run_pipeline
             await run_pipeline(self)
+            if self.config.strict_tools:
+                from .orchestrator import selected_names
+                for name in selected_names(self.config):
+                    if not self.store.meta('executed:'+name,False):
+                        self.limit(name+': strict external requirement incomplete; no process execution (missing eligible inputs or failed launch)')
             self.correlate()
             self.scheduler.check_time()
             for module in ("http","crawl","analysis","checks"):
@@ -548,7 +563,7 @@ class Scanner:
                 if self.config.mode in {"passive", "offline"} and module in {"http","crawl","checks"}:
                     self.store.stage(module,"skipped","Passive mode makes no target HTTP/TLS requests")
                 elif not previous or previous[0] not in {"partial","failed"}:
-                    self.store.stage(module,"partial" if self.limits else "completed",f"Native {module}; scope and budgets retained")
+                    self.store.stage(module,"partial" if self.limits else "completed",f"Shared {module} evidence; see capability execution records; scope and budgets retained")
             if self.limits or any(s["state"] in {"partial","failed","degraded","blocked-by-policy","unavailable","incompatible"} for s in self.store.rows("stages")):
                 state = "partial"
         except BudgetStop as exc:

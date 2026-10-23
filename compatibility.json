@@ -1,20 +1,19 @@
 {
-  "checked_date": "2026-10-16",
+  "checked_date": "2026-10-22",
   "python_execution_verified": [
     "3.12.14/linux-x86_64",
-    "3.13.5/linux-x86_64"
+    "3.13.5/linux-x86_64",
+    "3.12/windows-x86_64 (CI)",
+    "3.13/windows-x86_64 (CI)"
   ],
-  "python_ci_pending": [
-    "3.12/windows-x86_64",
-    "3.13/windows-x86_64"
-  ],
+  "python_ci_pending": [],
   "tools": {
     "subfinder": {
       "reviewed_version": "2.17.0",
       "source_commit_inspected": "c97f25802892093060f0fc424bfc3f39e273693a",
       "license": "MIT",
       "linux_binary_sha256": "bf4ad8590702b0bb92be9b3be185f96a230b047c9b97f2831cf8914344f0b15a",
-      "linux_executed": "version/help only; live provider collection unexecuted",
+      "linux_executed": "Real executable against isolated provider fixture responses in Ubuntu 24.04 CI on Python 3.12 and 3.13; parsed evidence persisted; no live provider availability claim",
       "windows_executed": false,
       "active_execution_enabled": false,
       "passive_execution_enabled": true,
@@ -24,14 +23,15 @@
       "stable_id": 1,
       "risk": "provider",
       "policy_reason": "",
-      "native_fallback": []
+      "native_fallback": [],
+      "windows_version_help_verified": true
     },
     "urlfinder": {
       "reviewed_version": "0.0.3",
       "source_commit_inspected": "83efbd30e52777122e245fb32926864b2bddac5b",
       "license": "MIT",
       "linux_binary_sha256": "5ba7cea5b9f86a2a1ccad15df7d38bc67c880b12cd5476155db874707f6f5d9f",
-      "linux_executed": "version/help only; live provider collection unexecuted",
+      "linux_executed": "Real executable against isolated provider fixture responses in Ubuntu 24.04 CI on Python 3.12 and 3.13; parsed evidence persisted; no live provider availability claim",
       "windows_executed": false,
       "active_execution_enabled": false,
       "passive_execution_enabled": true,
@@ -41,93 +41,102 @@
       "stable_id": 2,
       "risk": "provider",
       "policy_reason": "",
-      "native_fallback": []
+      "native_fallback": [],
+      "windows_version_help_verified": true
     },
     "dnsx": {
       "reviewed_version": "1.3.1",
       "source_commit_inspected": "01e315f216db7d36198ec326fac13dd7846b1bec",
       "license": "MIT",
       "linux_binary_sha256": "5fca43ddfe95922d8d88a859c1fcc59fee327bf39ae574db66d391c6675b8ba3",
-      "linux_executed": "version/help only; direct execution blocked; native loopback alternative exercised",
+      "linux_executed": "Real strict contained HTTP/HTTPS/DNS fixture pipeline in Ubuntu 24.04 CI on Python 3.12 and 3.13; structured results, persisted evidence, reports/graphs and resume verified",
       "windows_executed": false,
-      "active_execution_enabled": false,
+      "active_execution_enabled": true,
       "passive_execution_enabled": false,
       "offline_execution_enabled": false,
       "stable_id": 3,
       "risk": "active",
-      "policy_reason": "Independent resolver retries/queries cannot be reserved in the shared DNS budget or restricted by a verified cross-platform egress sandbox",
+      "policy_reason": "",
       "native_fallback": [
         "dns"
       ],
       "verified_archive": "dnsx_1.3.1_linux_amd64.zip",
-      "verified_archive_sha256": "438b964653056dd51dcfe614b1a16f8bced3cc48a1d27bc07cc6fdf2ef2a9533"
+      "verified_archive_sha256": "438b964653056dd51dcfe614b1a16f8bced3cc48a1d27bc07cc6fdf2ef2a9533",
+      "execution_backend": "linux-bubblewrap-broker-v1",
+      "runtime_requirement": "Verified Linux x86-64 boundary and tool-specific scope/input prerequisites"
     },
     "httpx": {
       "reviewed_version": "1.12.0",
       "source_commit_inspected": "4b6a9a9d476f94a4f3a630f37051f5671ecfb1f8",
       "license": "MIT",
       "linux_binary_sha256": "6d78b83b4da452a7e0bd3613c4fae04cbf523209f083904b563f4d4406a680b0",
-      "linux_executed": "version/help only; direct execution blocked; native loopback alternative exercised",
+      "linux_executed": "Real strict contained HTTP/HTTPS/DNS fixture pipeline in Ubuntu 24.04 CI on Python 3.12 and 3.13; structured results, persisted evidence, reports/graphs and resume verified",
       "windows_executed": false,
-      "active_execution_enabled": false,
+      "active_execution_enabled": true,
       "passive_execution_enabled": false,
       "offline_execution_enabled": false,
       "stable_id": 4,
       "risk": "active",
-      "policy_reason": "Independent DNS/connections bypass pinned public addresses and shared request/response limits; an HTTPS CONNECT proxy cannot enforce excluded paths",
+      "policy_reason": "",
       "native_fallback": [
         "http"
       ],
       "verified_archive": "httpx_1.12.0_linux_amd64.zip",
-      "verified_archive_sha256": "9d8439e8b6c9aa7d1e2314817a392e00d5178da3af5652f7475f88868f418f76"
+      "verified_archive_sha256": "9d8439e8b6c9aa7d1e2314817a392e00d5178da3af5652f7475f88868f418f76",
+      "execution_backend": "linux-bubblewrap-broker-v1",
+      "runtime_requirement": "Verified Linux x86-64 boundary and tool-specific scope/input prerequisites"
     },
     "katana": {
       "reviewed_version": "1.8.0",
       "source_commit_inspected": "35267ac5c8ff1db9694a319d0eb466ed97b0969f",
       "license": "MIT",
       "linux_binary_sha256": "3214c11a0548667b37ec17bbb691706b7e0de1f0f24b3ead2ee12c301ebc1bbc",
-      "linux_executed": "version/help only; direct execution blocked; native loopback alternative exercised",
+      "linux_executed": "Real strict contained HTTP/HTTPS/DNS fixture pipeline in Ubuntu 24.04 CI on Python 3.12 and 3.13; structured results, persisted evidence, reports/graphs and resume verified",
       "windows_executed": false,
-      "active_execution_enabled": false,
+      "active_execution_enabled": true,
       "passive_execution_enabled": false,
       "offline_execution_enabled": false,
       "stable_id": 5,
       "risk": "active",
-      "policy_reason": "Crawler subrequests cannot jointly enforce GET-only actions, excluded HTTPS paths, DNS pinning and shared remaining budgets without verified egress isolation",
+      "policy_reason": "",
       "native_fallback": [
         "http",
         "crawl"
       ],
       "verified_archive": "katana_1.8.0_linux_amd64.zip",
-      "verified_archive_sha256": "cb027ae99d0757061b70c07a15c7a80f62c5a535ab52c4a329f80c4b0a7309d2"
+      "verified_archive_sha256": "cb027ae99d0757061b70c07a15c7a80f62c5a535ab52c4a329f80c4b0a7309d2",
+      "execution_backend": "linux-bubblewrap-broker-v1",
+      "runtime_requirement": "Verified Linux x86-64 boundary and tool-specific scope/input prerequisites"
     },
     "nuclei": {
       "reviewed_version": "3.11.1",
       "source_commit_inspected": "a8c88feb4a1c8e961b7902534ce3af97e9d524a4",
       "license": "MIT",
       "linux_binary_sha256": "c49588140f357cbdddd5436dec11201953a4c5390faeec90777f9ee2cfd70251",
-      "linux_executed": "version/help only; direct execution blocked; native loopback alternative exercised",
+      "linux_executed": "Real strict contained HTTP/HTTPS/DNS fixture pipeline in Ubuntu 24.04 CI on Python 3.12 and 3.13; structured results, persisted evidence, reports/graphs and resume verified",
       "windows_executed": false,
-      "active_execution_enabled": false,
+      "active_execution_enabled": true,
       "passive_execution_enabled": false,
       "offline_execution_enabled": false,
       "stable_id": 8,
       "risk": "active",
-      "policy_reason": "Template allowlisting alone cannot pin subprocess destinations or account for every request, redirect and decompressed response; only native reviewed GET checks execute",
+      "policy_reason": "",
       "native_fallback": [
         "http",
         "checks"
       ],
       "verified_archive": "nuclei_3.11.1_linux_amd64.zip",
-      "verified_archive_sha256": "ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6"
+      "verified_archive_sha256": "ea63d4ae232808cd7c6bc00d0142428e231fab59dae01042246097d195835ab6",
+      "execution_backend": "linux-bubblewrap-broker-v1",
+      "runtime_requirement": "Verified Linux x86-64 boundary and tool-specific scope/input prerequisites"
     },
     "gitleaks": {
       "reviewed_version": "8.30.1",
       "source_commit_inspected": "b58d3f102cf3a2c84cb7f923d05c25c9b1aed84b",
       "license": "MIT",
       "linux_binary_sha256": "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509",
-      "linux_executed": "Real V3 per-artifact offline integration in demo, loopback collection and immutable rerun",
-      "windows_executed": false,
+      "linux_executed": "Real reviewed executable against local synthetic artifacts on Linux Python 3.12.14 and 3.13.5; parsed evidence, CLI collection and immutable offline rerun verified",
+      "windows_executed": true,
       "active_execution_enabled": false,
       "passive_execution_enabled": false,
       "offline_execution_enabled": true,
@@ -138,14 +147,15 @@
       "policy_reason": "",
       "native_fallback": [
         "analysis"
-      ]
+      ],
+      "windows_verification": "Reviewed 8.30.1 executable installed and synthetic-artifact integration passed on Windows Python 3.12 and 3.13 CI"
     },
     "jsluice": {
       "reviewed_version": "0ddfab153e060a9eeaded4d8669233f7c071e7e4",
       "source_commit_inspected": "0ddfab153e060a9eeaded4d8669233f7c071e7e4",
       "license": "MIT",
       "linux_binary_sha256": "0fe91d8b9a88b1029e90b6265417b4a34b3e617b0959b4d2aceea219d7917c43",
-      "linux_executed": "Real V3 per-artifact offline integration in demo, loopback collection and immutable rerun",
+      "linux_executed": "Real reviewed executable against local synthetic artifacts on Linux Python 3.12.14 and 3.13.5; parsed evidence, CLI collection and immutable offline rerun verified",
       "windows_executed": false,
       "active_execution_enabled": false,
       "passive_execution_enabled": false,
@@ -165,8 +175,8 @@
     "environment.yaml": "0d3d9f7a545db5c525a541d89cead8da8dd8f20f61b6b0c35f0a1beece3adc84",
     "git-head.yaml": "e0232f98b1ab2eb3182a022f1869dc1beb2e5cb76b1376c2df6fcc0d649b3696"
   },
-  "application_version": "3.1.0",
-  "schema_version": 3,
+  "application_version": "3.1.1",
+  "schema_version": 4,
   "provider_integrations": {
     "wayback-cdx": {
       "enabled_by_default": false,
@@ -181,7 +191,7 @@
       "access": "Observed authorized public IP/ASN metadata only"
     }
   },
-  "active_isolation_assessment": "No verified cross-platform egress isolation backend; Linux user/network namespace check failed with read-only uid_map. HTTPS CONNECT cannot enforce path exclusions.",
+  "active_isolation_assessment": "Runtime-verified Linux x86-64 namespace/seccomp and HTTP/DNS broker passed required real-binary and adversarial CI tests on Ubuntu 24.04. Current cloud host rejects uid-map setup and retains native fallback. Kali-specific host provisioning remains to be checked. Windows active backend unavailable.",
   "v3_verification": {
     "platform": "Linux/Python 3.12.14 and 3.13.5",
     "public_target_scans": false,
@@ -210,5 +220,53 @@
     "public_target_scans": false,
     "live_provider_calls": false,
     "active_binaries_executed": false
+  },
+  "v311_verification": {
+    "date": "2026-10-22",
+    "linux_python312": "440 passed, 9 namespace-dependent skips, 24.17s; real local Gitleaks/jsluice enabled",
+    "linux_python313": "440 passed, 9 namespace-dependent skips, 24.58s; real local Gitleaks/jsluice enabled",
+    "required_contained_ci": {
+      "python": [
+        "3.12",
+        "3.13"
+      ],
+      "platform": "Ubuntu 24.04 x86-64",
+      "tests_per_job": 45,
+      "result": "passed; containment required",
+      "url": "https://github.com/Theghost2004/TheGodRecon/actions/runs/39713285627"
+    },
+    "public_target_scans": false,
+    "live_provider_calls": false,
+    "kali_host_executed": false,
+    "active_binaries_executed": [
+      "dnsx",
+      "httpx",
+      "katana",
+      "nuclei"
+    ],
+    "provider_fixture_binaries_executed": [
+      "subfinder",
+      "urlfinder"
+    ],
+    "local_artifact_binaries_executed": [
+      "jsluice",
+      "gitleaks"
+    ],
+    "windows_active_backend": "Unavailable; native fallbacks preserved",
+    "windows_template_checkout": "Both reviewed hashes preserved in fresh core.autocrlf=true checkout and passing native Windows Python 3.12/3.13 CI",
+    "asset_map_browser": "10 checks passed; no errors or external requests; actual Chromium rendering of offline demo",
+    "report_browser": "17 Chromium checks passed; no errors or external requests; synthetic localhost report",
+    "cli_workflow": "21 checks passed; 57 localhost GETs across separate runs; zero additional resume/offline rerun requests",
+    "core_ci": {
+      "matrix": [
+        "Ubuntu/Python 3.12",
+        "Ubuntu/Python 3.13",
+        "Windows/Python 3.12",
+        "Windows/Python 3.13"
+      ],
+      "result": "All four passed, including install, core tests, real Gitleaks and CLI/demo/resume/rerun workflows",
+      "url": "https://github.com/Theghost2004/TheGodRecon/actions/runs/39713285705",
+      "commit": "d33db5f0b30ee7ac763124b76ec1f9b6b48b6d75"
+    }
   }
 }

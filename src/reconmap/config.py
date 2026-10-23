@@ -164,7 +164,7 @@ class ScanConfig(StrictModel):
     execution_engines: dict[str, Literal["auto", "native"]] = {}
     strict_tools: bool = False
     local_inputs: list[str] = []
-    provider_sources: dict[str, list[str]] = {"subfinder": ["crtsh"], "urlfinder": ["commoncrawl"]}
+    provider_sources: dict[str, list[str]] = {"subfinder": ["crtsh"], "urlfinder": ["alienvault"]}
     selected_tools: list[str] | None = None
     profile: Literal["standard", "passive", "offline", "full"] | None = None
     enrichments: list[str] = []

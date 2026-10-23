@@ -4,6 +4,8 @@ import hashlib
 import html
 import json
 
+from . import __version__
+
 SCRIPT = r'''
 'use strict';
 const graph=JSON.parse(document.getElementById('graph-data').textContent);
@@ -81,12 +83,15 @@ def render_map(graph, report_href="../reports/index.html"):
     payload=json.dumps(graph,ensure_ascii=True).replace('<','\\u003c').replace('>','\\u003e').replace('&','\\u0026')
     digest=base64.b64encode(hashlib.sha256(SCRIPT.encode()).digest()).decode()
     summary=graph['summary']
-    title=next((n['label'] for n in graph['nodes'] if n['type']=='domain'),'Application surface')
+    # Node ordering is a stable hash order, not a statement of target ownership.
+    # An unrelated domain must never become the title of an engagement map.
+    title=summary.get('target') or next((n.get('url',n['label']) for n in graph['nodes']
+        if 'user-selected-target' in n.get('states',[])), 'Application surface')
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-{digest}'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <title>TheGodRecon · Asset map · {html.escape(title)}</title><style>
 :root{{color-scheme:dark}}*{{box-sizing:border-box}}body{{margin:0;background:#0c1323;color:#e7edf9;font:15px system-ui;overflow-wrap:anywhere}}header{{padding:2rem 3vw;background:#13213a;border-bottom:1px solid #2c4165}}h1{{margin:.4rem 0;font-size:2rem}}.eyebrow{{color:#81dfc2;letter-spacing:.12em;font-size:.75rem}}a{{color:#9ccaff}}.cards{{display:flex;gap:1rem;flex-wrap:wrap;margin-top:1.4rem}}.card{{background:#1b2c48;border:1px solid #344b70;border-radius:9px;padding:.8rem 1.4rem}}.card strong{{font-size:1.7rem;display:block}}.card small,small{{color:#b6c8e4}}main{{display:grid;grid-template-columns:minmax(190px,230px) minmax(260px,1fr) minmax(280px,1fr);gap:1.3rem;padding:1.5rem 3vw}}aside,section{{min-width:0}}label{{display:block;margin-bottom:1rem;color:#b9cbe6}}input,select,button{{font:inherit;color:inherit;background:#152641;border:1px solid #46618a;border-radius:5px;padding:.55rem;max-width:100%}}input,select{{width:100%;margin-top:.3rem}}button{{cursor:pointer;margin:.3rem .35rem .3rem 0}}button:hover{{border-color:#81dfc2}}button:disabled{{opacity:.4;cursor:default}}details{{border:1px solid #2c4165;border-radius:7px;padding:.75rem;margin:.5rem 0;background:#101e34}}summary{{cursor:pointer}}details p{{margin:.6rem 0}}pre{{font-size:.78rem;white-space:pre-wrap;overflow-wrap:anywhere}}#inspector{{padding:0 1rem;border-left:1px solid #2c4165}}#inspector h2{{font-size:1.1rem}}.note{{color:#afc1dc;font-size:.85rem;line-height:1.6}}.toolbar{{display:flex;gap:.3rem}}@media(max-width:850px){{main{{grid-template-columns:1fr}}#inspector{{border:0;padding:0}}}}
-</style></head><body><header><div class="eyebrow">THEGODRECON 3.1.0 / OBSERVABLE APPLICATION SURFACE</div><h1>{html.escape(title)}</h1>
+</style></head><body><header><div class="eyebrow">THEGODRECON {__version__} / OBSERVABLE APPLICATION SURFACE</div><h1>{html.escape(title)}</h1>
 <p>Endpoint hierarchy &amp; evidence relationships</p><nav><a href="{html.escape(report_href, quote=True)}">Investigation report</a> · <a href="endpoint-tree.txt">Endpoint tree</a> · <a href="asset-graph.json" download>Graph JSON</a> · <a href="asset-graph.dot" download>Graphviz DOT</a></nav>
 <div class="cards">{''.join(f'<div class="card"><strong>{summary[key]}</strong><small>{label}</small></div>' for key,label in [('hosts','Hosts'),('urls','URLs discovered'),('tested_urls','URLs observed'),('api_candidates','API route candidates'),('nodes','Graph nodes'),('edges','Relationships')])}</div></header>
 <main><aside><h2>Explore evidence</h2><label>Search endpoints<input id="search" type="search" placeholder="/api, app.js, login…"></label><label>Node type<select id="type"><option value="">All types</option></select></label><label>Evidence source<select id="source"><option value="">All sources</option></select></label><label>Observation state<select id="state"><option value="">All states</option></select></label><button id="reset">Reset filters</button><p class="note">Expand a node to inspect its relationships. Following a relationship navigates locally, including cycles and shared resources.</p><p class="note">Path groups describe URL structure. They do not prove that directories exist. Historical and inferred references are distinct from current HTTP observations.</p><p class="note">No target resource is loaded. Exports are redacted; raw evidence remains in the run folder.</p></aside>

@@ -88,7 +88,13 @@ def handle(args):
             print(f"Registered {args.name}: {args.path.resolve()} | {execution_status(info)}; {info.reason}")
             return 0 if info.compatible else 2
         records = doctor(overrides(args.tool))
+        from .execution_boundary import ACTIVE_TOOLS, probe_boundary
+        boundary = probe_boundary()
         data = [{**records[t.name].record(), "status": execution_status(records[t.name]), "operating_systems": "Linux/Windows native core; external binary verification is platform-specific"} for t in REGISTRY]
+        for row in data:
+            row['direct_execution_permitted']=row['supported'] and (row['name'] not in ACTIVE_TOOLS or boundary.available)
+            if row['name'] in ACTIVE_TOOLS and row['supported'] and not boundary.available:
+                row.update(status='backend-unavailable',reason=boundary.reason)
         if args.json:
             print(json.dumps(data, indent=2))
         else:

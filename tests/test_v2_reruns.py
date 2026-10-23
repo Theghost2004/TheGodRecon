@@ -100,7 +100,9 @@ def test_v1_database_additive_migration_and_readonly_reuse(tmp_path):
     store.close()
 
 
-def test_fresh_active_rerun_uses_new_requests_and_preserves_parent(tmp_path):
+def test_fresh_active_rerun_uses_new_requests_and_preserves_parent(tmp_path,monkeypatch):
+    from reconmap.adapters import ToolInfo
+    monkeypatch.setattr('reconmap.cli.identify_selected',lambda config,name:ToolInfo(name,None,'missing',None,False,False,'fixture','missing'))
     hits=[]
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
@@ -116,7 +118,7 @@ def test_fresh_active_rerun_uses_new_requests_and_preserves_parent(tmp_path):
         assert main(['init','--target',target,'--config',str(config),'--lab'])==0
         assert main(['scan','--target',target,'--config',str(config),'--modules','http','--output-root',str(tmp_path)])==0
         parent=tmp_path/'127.0.0.1';before=tree_hash(parent)
-        # httpx direct execution remains blocked; native probing actually runs.
+        # Missing external binary uses native probing without reusing old responses.
         assert main(['rerun','--from',str(parent),'--tools','4','--enrich','tech,dedup,priority'])==2
         assert hits==['/','/'] and tree_hash(parent)==before
         child=tmp_path/'1_127.0.0.1';manifest=read_manifest(child)
@@ -129,7 +131,7 @@ def test_fresh_active_rerun_uses_new_requests_and_preserves_parent(tmp_path):
             assert current[0]['current_http'] and current[0]['prior_http']
         finally:store.close()
         store=Store(child)
-        assert store.rows('tool_executions')[0]['state']=='blocked-by-policy'
+        assert store.rows('tool_executions')[0]['state']=='unavailable'
         assert store.rows('urls')[0]['title']=='Collection 2'
         store.close()
     finally:server.shutdown();server.server_close();thread.join()

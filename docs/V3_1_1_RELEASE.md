@@ -1,0 +1,129 @@
+# TheGodRecon V3.1.1 — Linux-First Eight-Tool Execution Engine
+
+V3.1.1 extends the existing BlackBox/scan orchestrator. Linux x86-64 is the first
+platform with a verified active-tool boundary. Windows retains the native core,
+SQLite, reports, graphs and supported offline adapters; equivalent Windows
+active containment is deferred.
+
+The four formerly blocked tools now have real external adapters: dnsx through a
+counted DNS broker, ProjectDiscovery httpx through the shared HTTP broker, Katana
+through bounded non-headless crawling, and Nuclei with two hashed exposure
+checks. Compatibility and execution permission are checked separately at runtime.
+`strict_tools: true` requires actual selected external processes and rejects
+missing prerequisites; it never substitutes native results.
+
+## Install and verify on Kali Linux
+
+Provision the optional system dependencies, then run the application unprivileged:
+
+```sh
+sudo apt-get install bubblewrap openssl python3 python3-venv
+python3 tools/bootstrap.py
+source .venv/bin/activate
+reconmap --version
+reconmap doctor
+reconmap tools doctor --json
+```
+
+Doctor must show the actual namespace backend available. Restricted containers
+may prohibit user namespaces even with bubblewrap installed. Do not disable scope
+checks or run the whole scanner as root to work around such restrictions.
+
+For an explicitly authorized target, keep the existing scope YAML and set
+`strict_tools: true`:
+
+```sh
+reconmap blackbox https://authorized.example --config scope.yaml
+reconmap scan https://authorized.example --config scope.yaml --tools subfinder,httpx,katana
+```
+
+The first command selects all eight capabilities. The second honors its subset.
+New configurations use the reviewed AlienVault URLFinder source. Existing
+explicit Common Crawl selections are preserved and diagnosed as partial because
+the pinned tool cannot parse standard CDX record lines. URLFinder's per-invocation
+configuration directory is now created before launch.
+
+SecLists remains an optional setup dependency and is never downloaded during scans.
+
+## Verify without public targets
+
+```sh
+python tools/install_tools.py --tool subfinder --tool urlfinder --tool dnsx --tool httpx --tool katana --tool nuclei --directory .tools/bin
+RECONMAP_REQUIRE_CONTAINMENT=1 RECONMAP_TEST_ACTIVE_TOOLS=.tools/bin python -m pytest -q tests/test_execution_boundary.py tests/test_contained_linux.py
+python -m pytest -q
+```
+
+Linux CI requires real active binaries and isolated provider fixtures on Python
+3.12/3.13. The existing Ubuntu/Windows matrix is retained. Gitleaks and jsluice
+also have real local-artifact tests; see the recorded execution results for which
+binaries/platforms were actually exercised. Provider fixture execution does not
+establish live-provider availability, completeness or service rate behavior.
+
+## Outputs and compatibility
+
+No database migration is required. Existing collision-safe run directories,
+checkpoints, normalization, artifact hashes, rankings and analyst decisions remain.
+The output paths are unchanged:
+
+- `RUN/recon.sqlite`
+- `RUN/raw/TOOL/INVOCATION/`
+- `RUN/reports/index.html`, `coverage.json`, `stage-results.json`
+- `RUN/graph/endpoint-tree.txt`, `asset-graph.json`, `asset-graph.dot`, `asset-map.html`
+
+Process identities, real engines, exit codes, completed-input counts, accumulated
+request usage and coverage limitations accompany the collected evidence.
+
+See [execution architecture and limitations](EXTERNAL_EXECUTION.md) and the
+[progress and verification record](EXTERNAL_EXECUTION_PROGRESS.md). No merge to
+`main` is performed automatically.
+
+## Files changed
+
+New execution modules are `active_tools.py`, `execution_boundary.py` and
+`isolated_worker.py`. Existing CLI, orchestrator, evidence store and report/graph
+workflows are extended in place. Full changed-file inventory from the base commit:
+
+```text
+.gitattributes
+.github/workflows/contained-tools.yml
+.github/workflows/test.yml
+README.md
+compatibility.json
+docs/ARCHITECTURE.md
+docs/EXTERNAL_EXECUTION.md
+docs/EXTERNAL_EXECUTION_PROGRESS.md
+docs/TOOLS.md
+docs/V3_1_1_RELEASE.md
+pyproject.toml
+src/reconmap/__init__.py
+src/reconmap/active_tools.py
+src/reconmap/adapters.py
+src/reconmap/analysis.py
+src/reconmap/asset_graph.py
+src/reconmap/asset_map.py
+src/reconmap/cli.py
+src/reconmap/commands_v2.py
+src/reconmap/config.py
+src/reconmap/content_discovery.py
+src/reconmap/coverage.py
+src/reconmap/engine.py
+src/reconmap/environment.py
+src/reconmap/execution_boundary.py
+src/reconmap/integrations.py
+src/reconmap/isolated_worker.py
+src/reconmap/orchestrator.py
+src/reconmap/progress.py
+src/reconmap/setup.py
+src/reconmap/tool_registry.py
+tests/test_asset_graph.py
+tests/test_blackbox.py
+tests/test_contained_linux.py
+tests/test_execution_boundary.py
+tests/test_v2_cli.py
+tests/test_v2_integrations.py
+tests/test_v2_reruns.py
+tests/test_v31_cli.py
+tests/test_v3_orchestration.py
+tools/check_report_browser.cjs
+tools/verify_local_workflow.py
+```

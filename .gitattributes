@@ -1,0 +1,3 @@
+# These reviewed templates are verified byte-for-byte before execution.
+# Keep the same SHA-256 identity when Windows Git uses core.autocrlf=true.
+src/reconmap/templates/*.yaml text eol=lf

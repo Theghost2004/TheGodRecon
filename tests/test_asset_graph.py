@@ -186,6 +186,21 @@ def test_json_dot_html_and_sqlite_are_consistent_safe_exports(scanner,tmp_path):
         subprocess.run(['dot','-Tdot',str(dot),'-o',str(tmp_path/'parsed.dot')],check=True,capture_output=True,timeout=20)
 
 
+def test_map_title_uses_run_target_not_external_domain_order(scanner):
+    response(scanner,'/','<a href="https://outside.test/login">SSO</a>')
+    g=graph(scanner)
+    g['nodes'].sort(key=lambda n:n['label']!='outside.test')
+    assert g['nodes'][0]['label']=='outside.test'
+    assert g['summary']['target']=='https://example.com/'
+    page=render_map(g)
+    assert '<h1>https://example.com/</h1>' in page
+    assert '<h1>outside.test</h1>' not in page
+    g['summary']['target']='<img src=x onerror=alert(1)>'
+    assert '<h1>&lt;img src=x onerror=alert(1)&gt;</h1>' in render_map(g)
+    del g['summary']['target']  # Legacy exports without target metadata stay usable.
+    assert '<h1>Application surface</h1>' in render_map(g)
+
+
 def test_large_graph_paginates_and_prefix_depth_is_bounded(scanner):
     response(scanner,'/api/0','[]',mime='application/json')
     template=normalize_evidence(scanner.store)[0]

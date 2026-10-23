@@ -64,6 +64,7 @@ def test_plan_is_read_only_and_does_not_request_targets(tmp_path, monkeypatch, c
     def identify(name, override=None):
         return ToolInfo(name, None, 'unavailable', None, False, False, 'fixture', 'missing')
     monkeypatch.setattr('reconmap.commands_v2.identify', identify)
+    monkeypatch.setattr('reconmap.cli.identify_selected', lambda config,name:identify(name))
     async def forbidden(*args, **kwargs): raise AssertionError('network attempt')
     monkeypatch.setattr('aiohttp.ClientSession._request', forbidden)
     assert main(['plan', '--target', 'example.com/?token=fixture-secret-value', '--config', str(path), '--tools', 'all', '--json']) == 0
@@ -71,15 +72,15 @@ def test_plan_is_read_only_and_does_not_request_targets(tmp_path, monkeypatch, c
     assert 'fixture-secret-value' not in output
     plan = json.loads(output)
     assert [t['id'] for t in plan['selected_tools']] == list(range(1, 9))
-    assert len([t for t in plan['selected_tools'] if t['status'] == 'blocked-by-policy']) == 4
+    assert all(t['status'] == 'unavailable' and 'Executable not found' in t['policy_reason'] for t in plan['selected_tools'])
     assert not (tmp_path / 'recon-output').exists()
     assert main(['plan', '--target', 'example.com', '--config', str(path), '--tools', 'all', '--strict-tools']) == 4
 
 
 @pytest.mark.parametrize('name', ['dnsx', 'httpx', 'katana', 'nuclei'])
-def test_active_command_is_blocked_even_if_info_claims_support(tmp_path, name):
+def test_active_command_requires_verified_boundary_even_if_info_claims_support(tmp_path, name):
     info = ToolInfo(name, '/malicious-binary', 'compatible', 'a'*64, True, True, 'fixture', 'fixture')
-    with pytest.raises(ValueError, match='blocked-by-policy'):
+    with pytest.raises(ValueError, match='verified execution boundary'):
         command(info, 'example.com', tmp_path, 10)
 
 

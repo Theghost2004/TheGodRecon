@@ -1,0 +1,58 @@
+name: Contained active tools
+on: [push, pull_request, workflow_dispatch]
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  linux-boundary:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Provision isolated runner prerequisites
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y bubblewrap openssl
+          # Provision this disposable runner; the scanner itself stays unprivileged.
+          if test -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Locked Python installation
+        run: |
+          python -m pip install --require-hashes -r requirements.lock
+          python -m pip install --no-deps -e .
+      - name: Install reviewed real executables
+        run: python tools/install_tools.py --tool dnsx --tool httpx --tool katana --tool nuclei --tool subfinder --tool urlfinder --directory .tools/bin
+      - name: Verify production isolation and real tools against local fixtures
+        env:
+          RECONMAP_REQUIRE_CONTAINMENT: '1'
+          RECONMAP_TEST_ACTIVE_TOOLS: .tools/bin
+        run: python -m pytest -q tests/test_execution_boundary.py tests/test_contained_linux.py --junitxml=contained-results.xml
+      - name: Publish fixture failure diagnostics
+        if: always()
+        run: |
+          python - <<'PYTHON'
+          import pathlib, xml.etree.ElementTree as ET
+          report = pathlib.Path('contained-results.xml')
+          if report.exists():
+              for case in ET.parse(report).iter('testcase'):
+                  for failure in list(case):
+                      if failure.tag not in {'failure', 'error'}:
+                          continue
+                      detail = (failure.text or failure.get('message', ''))[-3500:]
+                      detail = detail.replace('%', '%25').replace('\r', '%0D').replace('\n', '%0A')
+                      print(f"::error title={case.get('name')}::{detail}")
+          PYTHON
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: contained-results-${{ matrix.python }}
+          path: contained-results.xml

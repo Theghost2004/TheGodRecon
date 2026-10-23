@@ -17,6 +17,7 @@ from .orchestrator import fallback_allowed, record_execution, NATIVE_ENGINES
 
 
 async def invoke(scanner, info, cwd, input_path=None):
+    started = time.monotonic()
     scanner.scheduler.check_time()
     scanner.check_disk_budget(scanner.config.budgets.response_bytes * 2)
     argv = command(info, scanner.manifest["host"], cwd, scanner.config.budgets.provider_seconds,
@@ -41,6 +42,10 @@ async def invoke(scanner, info, cwd, input_path=None):
         result, error = exc.result, str(exc)
     scanner.store.set_meta("executed:"+info.name, True)
     capture(result, cwd)
+    result.execution = {'executable':info.path,'version':info.version,'sha256':info.sha256,
+        'executed':True,'exit_code':result.code,'input_count':1,
+        'duration_seconds':round(time.monotonic()-started,6),
+        'backend':'local-artifact' if input_path else 'approved-provider'}
     return result, error
 
 
@@ -73,6 +78,7 @@ async def _collect_passive(scanner, names):
         started = time.monotonic()
         cwd = None
         count = 0
+        result = None
         state, detail = "failed", ""
         try:
             if not scanner.policy.host_allowed(scanner.manifest["host"]):
@@ -82,8 +88,14 @@ async def _collect_passive(scanner, names):
             cwd = invocation_directory(scanner, name)
             result, error = await invoke(scanner, info, cwd)
             records, errors = parse_records(name, result.stdout)
-            state = "failed" if result.code != 0 or error else "partial" if errors or re.search(r"(?i)\b(error|failed|timeout|denied|forbidden)\b", result.stderr) else "completed"
+            provider_error = re.search(r"(?i)\b(error|ERR|FTL|failed|timeout|denied|forbidden|could not)\b", result.stderr)
+            state = "failed" if result.code != 0 or error else "partial" if errors or provider_error else "completed"
             detail = error or "; ".join(errors[:20]) or (f"Exit {result.code}; valid partial records retained" if result.code else "Provider requests are not measured")
+            if provider_error and not error and not errors:
+                detail = 'Provider reported incomplete execution: '+redact(result.stderr[-1500:])
+            if name == 'urlfinder' and 'commoncrawl' in scanner.config.provider_sources.get(name, []):
+                state = 'partial' if state == 'completed' else state
+                detail += '; Pinned URLFinder CommonCrawl parser cannot consume standard CDX records; select provider_sources.urlfinder: [alienvault]'
             if len(records) > scanner.config.budgets.provider_results:
                 scanner.limit("provider result cap reached")
                 state = "partial"
@@ -107,6 +119,7 @@ async def _collect_passive(scanner, names):
                 record_execution(scanner, name, engine=name, state=state, reason=detail, count=count,
                     seconds=time.monotonic()-started, outputs=[str(cwd.relative_to(scanner.run))] if cwd else [],
                     accounting={"target_requests": 0, "provider_requests": None},
+                    process={**result.execution,"output_count":count} if result and hasattr(result,"execution") else None,
                     limitations=[limitation] if state != "completed" else [])
 
 
@@ -190,6 +203,7 @@ async def _local_tools(scanner, names):
                 started = time.monotonic()
                 cwd = None
                 records = []
+                result = None
                 state, detail = execution_status(info), info.reason
                 supplementary = name == "jsluice" and artifact["kind"] == "map"
                 if supplementary:
@@ -227,6 +241,7 @@ async def _local_tools(scanner, names):
                     record_execution(scanner, name, engine=name if cwd else None, state=state, reason=detail,
                         inputs=[artifact["path"]], outputs=[work["capture"]] if cwd else [], count=len(records),
                         seconds=time.monotonic()-started, accounting={"target_requests": 0, "provider_requests": 0},
+                        process={**result.execution,"output_count":len(records)} if result and hasattr(result,"execution") else None,
                         limitations=[detail] if state not in {"completed", "skipped"} else [])
             states.append(work["state"])
             details.append(work["detail"])
@@ -241,19 +256,21 @@ async def _local_tools(scanner, names):
                     scanner.store.finding("gitleaks:" + record["RuleID"], "artifact:" + artifact["hash"], "Potential secret material (offline Gitleaks)",
                         {"hash": artifact["hash"], "line": record.get("StartLine"), "excerpt": "[REDACTED]", "synthetic": synthetic, "artifact": work["capture"], "next_check": "Review context locally; credential validity is untested"}, priority=5 if synthetic else 80, source="gitleaks")
             empty_js = name == "jsluice" and work["state"] == "completed" and not work["records"]
+            used_native = False
             if (work["state"] != "completed" or empty_js) and fallback_allowed(scanner, name):
                 started = time.monotonic()
                 before = scanner.store.conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] + scanner.store.conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0]
                 native_artifact(scanner, name, artifact, text, bases)
+                used_native = True
                 count = scanner.store.conn.execute("SELECT COUNT(*) FROM observations").fetchone()[0] + scanner.store.conn.execute("SELECT COUNT(*) FROM findings").fetchone()[0] - before
                 record_execution(scanner, name, engine=NATIVE_ENGINES[name], fallback=not work["supplementary"], count=count,
                     inputs=[artifact["path"]], seconds=time.monotonic()-started, accounting={"target_requests": 0, "provider_requests": 0},
                     limitations=[] if work["supplementary"] or empty_js else ["Native fallback has narrower coverage than the selected tool"])
             scanner.store.observed("artifact:"+artifact["hash"], "artifact-analysis", {
                 "tool": name, "primary_status": work["state"], "primary_records": len(work["records"]),
-                "fallback": work["state"] != "completed" or empty_js, "contexts": bases,
-                "reason": "Primary returned zero leads; native AST analysis also applied" if empty_js else work["detail"],
-                "hash": artifact["hash"], "artifact": work["capture"], "processed": True,
+                "fallback": used_native, "contexts": bases,
+                "reason": ("Primary returned zero leads; native AST analysis also applied" if used_native else "Primary returned zero leads; native analysis not executed") if empty_js else work["detail"],
+                "hash": artifact["hash"], "artifact": work["capture"], "processed": work["state"] == "completed" or used_native or bool(work["records"]),
             }, name, identity="artifact-analysis:"+context_key)
             scanner.store.set_meta(context_key, True)
         state = next((s for s in ("failed", "partial", "incompatible", "unavailable", "blocked-by-policy") if s in states), "completed")
